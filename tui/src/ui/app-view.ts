@@ -118,6 +118,10 @@ export class AppView {
   private readonly confirmationModal: BoxRenderable;
   private readonly confirmationText: TextRenderable;
   private bodyKey = "";
+  // Live lines of the now-playing screen, updated in place every tick so the
+  // controls keep their hover state and never miss a click mid-rebuild.
+  private nowPlayingProgress: TextRenderable | null = null;
+  private nowPlayingSettings: TextRenderable | null = null;
   private dockBarStart = 0;
   private dockBarWidth = 0;
   private playerDuration = 0;
@@ -314,6 +318,8 @@ export class AppView {
       this.clearBody();
       this.renderBody(state);
       this.scheduleSelectionScroll(state);
+    } else if (state.screen === "now-playing") {
+      this.updateNowPlayingLive(state);
     }
     this.ctx.requestRender();
   }
@@ -577,7 +583,10 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
             ? state.profiles
             : state.screen === "now-playing"
               ? [
-                  state.player,
+                  // Position and sleep countdown change every second; they are
+                  // patched in place by updateNowPlayingLive instead of
+                  // rebuilding (and un-hovering) the whole screen.
+                  { ...state.player, positionSeconds: 0, sleepTimerSeconds: null },
                   state.library.find((item) => item.id === state.player.itemId)?.coverUrl,
                 ]
               : [state.visibleItems, state.downloads];
@@ -601,6 +610,8 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
   }
 
   private clearBody(): void {
+    this.nowPlayingProgress = null;
+    this.nowPlayingSettings = null;
     for (const child of [...this.body.getChildren()]) {
       this.body.remove(child);
       child.destroyRecursively();
@@ -1527,22 +1538,13 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
       }
       details.add(chapterRow);
     }
-    details.add(
-      text(
-        this.ctx,
-        "now-playing-progress",
-        concat(
-          t`${fg(palette.muted)(formatTime(player.positionSeconds))}  `,
-          progress(
-            player.positionSeconds,
-            player.durationSeconds,
-            Math.max(12, Math.min(48, state.width - 30)),
-          ),
-          t`  ${fg(palette.muted)(formatTime(player.durationSeconds))}`,
-        ),
-        { width: "100%", bg: palette.surface },
-      ),
+    this.nowPlayingProgress = text(
+      this.ctx,
+      "now-playing-progress",
+      this.nowPlayingProgressContent(state),
+      { width: "100%", bg: palette.surface },
     );
+    details.add(this.nowPlayingProgress);
     const controls = new BoxRenderable(this.ctx, {
       id: "now-playing-controls",
       width: "100%",
@@ -1567,20 +1569,13 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
     controls.add(this.playerControl("now-playing-forward", "+10s", 9, "seek-forward"));
     controls.add(this.playerControl("now-playing-next", "[ next ]", 12, "chapter-next"));
     details.add(controls);
-    const sleep =
-      player.sleepTimerMode === "chapter"
-        ? "end of chapter"
-        : player.sleepTimerSeconds !== null
-          ? formatTime(player.sleepTimerSeconds)
-          : (player.sleepTimer ?? "off");
-    details.add(
-      text(
-        this.ctx,
-        "now-playing-settings",
-        t`${fg(palette.subtle)(`Speed ${player.speed.toFixed(2)}×   Volume ${player.volume}% (+/−)   Sleep ${sleep} (s)`)} `,
-        { width: "100%", bg: palette.surface },
-      ),
+    this.nowPlayingSettings = text(
+      this.ctx,
+      "now-playing-settings",
+      this.nowPlayingSettingsContent(state),
+      { width: "100%", bg: palette.surface },
     );
+    details.add(this.nowPlayingSettings);
     this.body.add(card);
     this.body.add(
       text(this.ctx, "bookmarks-heading", sectionTitle("Bookmarks", player.bookmarks.length), {
@@ -1632,6 +1627,37 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
         this.body.add(row);
       });
     }
+  }
+
+  private nowPlayingProgressContent(state: AppState) {
+    const player = state.player;
+    return concat(
+      t`${fg(palette.muted)(formatTime(player.positionSeconds))}  `,
+      progress(
+        player.positionSeconds,
+        player.durationSeconds,
+        Math.max(12, Math.min(48, state.width - 30)),
+      ),
+      t`  ${fg(palette.muted)(formatTime(player.durationSeconds))}`,
+    );
+  }
+
+  private nowPlayingSettingsContent(state: AppState) {
+    const player = state.player;
+    const sleep =
+      player.sleepTimerMode === "chapter"
+        ? "end of chapter"
+        : player.sleepTimerSeconds !== null
+          ? formatTime(player.sleepTimerSeconds)
+          : (player.sleepTimer ?? "off");
+    return t`${fg(palette.subtle)(`Speed ${player.speed.toFixed(2)}×   Volume ${player.volume}% (+/−)   Sleep ${sleep} (s)`)} `;
+  }
+
+  private updateNowPlayingLive(state: AppState): void {
+    if (this.nowPlayingProgress)
+      this.nowPlayingProgress.content = this.nowPlayingProgressContent(state);
+    if (this.nowPlayingSettings)
+      this.nowPlayingSettings.content = this.nowPlayingSettingsContent(state);
   }
 
   private playerControl(

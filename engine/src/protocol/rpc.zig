@@ -194,6 +194,10 @@ fn waitForSocket(io: std.Io, socket_path: []const u8) !void {
     return error.MpvSocketTimeout;
 }
 
+fn speedSettingKey(allocator: std.mem.Allocator, provider_id: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "player.speed.{s}", .{provider_id});
+}
+
 fn voucherPathForMedia(allocator: std.mem.Allocator, local_path: []const u8) ![]u8 {
     const extension = std.fs.path.extension(local_path);
     const stem = local_path[0 .. local_path.len - extension.len];
@@ -1182,7 +1186,11 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                         runtime.position_seconds = resume_at;
                     }
                 }
-                if (try database.getSetting(allocator, "player.speed")) |saved_speed| {
+                // Speed is remembered per provider: a Yoto card should never
+                // inherit the 1.5x an audiobook listener picked for Audible.
+                const speed_key = try speedSettingKey(allocator, provider_id);
+                defer allocator.free(speed_key);
+                if (try database.getSetting(allocator, speed_key)) |saved_speed| {
                     defer allocator.free(saved_speed);
                     if (std.fmt.parseFloat(f64, saved_speed)) |value| {
                         if (value >= 0.5 and value <= 3) {
@@ -1294,7 +1302,9 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
             if (std.mem.eql(u8, command, "set-speed") or std.mem.eql(u8, command, "set-volume")) {
                 const value = try std.fmt.allocPrint(allocator, "{d}", .{numberParam(params.object, "value").?});
                 defer allocator.free(value);
-                database.putSetting(if (std.mem.eql(u8, command, "set-speed")) "player.speed" else "player.volume", value) catch {};
+                const speed_key = try speedSettingKey(allocator, runtime.provider_id);
+                defer allocator.free(speed_key);
+                database.putSetting(if (std.mem.eql(u8, command, "set-speed")) speed_key else "player.volume", value) catch {};
             }
         }
         return playerSuccess(allocator, io, writer, id, runtime);
