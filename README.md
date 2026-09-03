@@ -107,6 +107,21 @@ alias. Follow the printed `source` command or open a new terminal to activate
 the updated PATH. Set `AUDITUI_INSTALL_PREFIX` to choose another prefix; custom
 prefixes print a PATH instruction instead of editing shell configuration.
 
+### Omarchy bar widget
+
+On [Omarchy](https://omarchy.org), the
+[omarchy-auditui](https://github.com/JonathanRiche/omarchy-auditui) bar widget
+shows the current title, chapter, and progress while something is playing and
+hides itself otherwise:
+
+```sh
+omarchy plugin add https://github.com/JonathanRiche/omarchy-auditui.git --enable
+```
+
+It is driven by `auditui player status` (one JSON line, `{"state":"stopped"}`
+when Auditui is not playing) and `auditui player toggle|pause|play|next|previous|forward|back [SECS]`.
+That output carries display metadata only, never media sources or credentials.
+
 ## Develop from source
 
 ```sh

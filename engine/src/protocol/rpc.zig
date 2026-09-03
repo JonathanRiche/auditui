@@ -1139,6 +1139,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                     .title = runtime.title.?,
                     .coverPath = cover,
                     .startedAt = std.Io.Clock.real.now(io).toSeconds(),
+                    .enginePid = now_playing.currentPid(),
                 }) catch {};
             }
             if (runtime.database) |database| {

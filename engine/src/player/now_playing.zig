@@ -21,6 +21,9 @@ pub const Meta = struct {
     title: []const u8,
     coverPath: ?[]const u8 = null,
     startedAt: i64,
+    /// Engine process that owns mpv. Lets `status` report `stopped` even when
+    /// the engine was killed hard and left an orphaned mpv socket behind.
+    enginePid: ?i64 = null,
 };
 
 pub const Snapshot = struct {
@@ -152,10 +155,13 @@ pub fn writeSnapshot(allocator: std.mem.Allocator, io: std.Io, state_dir: []cons
     var loaded = load(allocator, io, state_dir) catch return writeStopped(writer);
     defer loaded.deinit();
     const meta = loaded.value;
+    if (meta.enginePid) |pid| if (!processAlive(io, pid)) return writeStopped(writer);
 
     const socket_path = try socketPath(allocator, state_dir);
     defer allocator.free(socket_path);
-    const live = mpv.queryState(allocator, io, socket_path, .{}) catch return writeStopped(writer);
+    // A non-null fallback path lets queryState flag mpv's idle state (file
+    // finished and unloaded) as ended, so a finished book hides the widget.
+    const live = mpv.queryState(allocator, io, socket_path, .{ .path = "" }) catch return writeStopped(writer);
 
     const chapters = mpv.queryChapters(allocator, io, socket_path) catch &.{};
     defer mpv.deinitChapters(allocator, chapters);
@@ -180,6 +186,21 @@ pub fn writeSnapshot(allocator: std.mem.Allocator, io: std.Io, state_dir: []cons
     };
     try std.json.Stringify.value(snapshot, .{ .emit_null_optional_fields = false }, writer);
     try writer.writeByte('\n');
+}
+
+/// Linux-only liveness probe via procfs; other platforms assume alive.
+fn processAlive(io: std.Io, pid: i64) bool {
+    if (@import("builtin").os.tag != .linux) return true;
+    if (pid <= 0) return false;
+    var buffer: [64]u8 = undefined;
+    const path = std.fmt.bufPrint(&buffer, "/proc/{d}", .{pid}) catch return false;
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return true;
+}
+
+pub fn currentPid() ?i64 {
+    if (@import("builtin").os.tag != .linux) return null;
+    return @intCast(std.os.linux.getpid());
 }
 
 /// Compact stopped snapshot; widgets only need `state` to hide themselves.
@@ -257,6 +278,19 @@ test "metadata round-trips, is private, never names the media source, and clears
 
     clear(std.testing.io, directory);
     try std.testing.expectError(error.FileNotFound, load(std.testing.allocator, std.testing.io, directory));
+}
+
+test "snapshot reports stopped when the recorded engine process is gone" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const length = try tmp.dir.realPath(std.testing.io, &path_buffer);
+    const dir = path_buffer[0..length];
+    try write(std.testing.allocator, std.testing.io, dir, .{ .provider = "audible", .account = "a", .itemId = "i", .title = "t", .startedAt = 1, .enginePid = 2147480000 });
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try writeSnapshot(std.testing.allocator, std.testing.io, dir, &out.writer);
+    try std.testing.expectEqualStrings("{\"state\":\"stopped\"}\n", out.written());
 }
 
 test "snapshot reports stopped without metadata and without a live mpv socket" {
