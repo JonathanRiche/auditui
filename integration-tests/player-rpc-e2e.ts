@@ -64,7 +64,11 @@ try {
     "pause",
   );
   assertPlayer(paused, "synthetic-tone", true, "pause response");
-  const pausedAt = Number(paused.positionSeconds);
+  // Let any samples already queued in the audio driver settle before taking
+  // the paused baseline. Older mpv builds can report one final small advance.
+  await Bun.sleep(150);
+  const pausedBaseline = assertOk(await rpc.request("player.status"), "paused baseline");
+  const pausedAt = Number(pausedBaseline.positionSeconds);
   await Bun.sleep(250);
   const stillPaused = assertOk(await rpc.request("player.status"), "paused status");
   if (Math.abs(Number(stillPaused.positionSeconds) - pausedAt) > 0.1) {

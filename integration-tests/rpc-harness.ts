@@ -45,6 +45,12 @@ export class RpcHarness {
     for (const name of ["home", "config", "data", "state", "cache"]) {
       await mkdir(join(sandbox, name), { recursive: true, mode: 0o700 });
     }
+    const mpvConfigDirectory = join(sandbox, "home", ".config", "mpv");
+    await mkdir(mpvConfigDirectory, { recursive: true, mode: 0o700 });
+    await Bun.write(
+      join(mpvConfigDirectory, "mpv.conf"),
+      "ao=null\nao-null-untimed=no\nao-null-speed=1\n",
+    );
 
     return RpcHarness.resume(sandbox);
   }
