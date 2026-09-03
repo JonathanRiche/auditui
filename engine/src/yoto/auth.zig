@@ -69,6 +69,15 @@ fn appendQueryField(writer: *std.Io.Writer, first: *bool, name: []const u8, valu
     try formEncode(writer, value);
 }
 
+/// Rejection text is attacker-influenced (it arrives via the browser), so
+/// collapse control characters before it reaches a terminal.
+fn sanitizeDescription(value: []u8) []u8 {
+    for (value) |*byte| if (byte.* < 0x20 or byte.* == 0x7f) {
+        byte.* = ' ';
+    };
+    return value;
+}
+
 fn constantTimeSliceEqual(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     var difference: u8 = 0;
@@ -111,6 +120,16 @@ pub const Callback = struct {
 /// Parses the request target from a loopback HTTP request. The integration
 /// listener must bind only 127.0.0.1 and pass the first request line here.
 pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const u8, expected_state: []const u8) !Callback {
+    var ignored: ?[]u8 = null;
+    defer if (ignored) |value| allocator.free(value);
+    return parseLoopbackRequestDetailed(allocator, request_line, expected_state, &ignored);
+}
+
+/// Like parseLoopbackRequest, but when the authorization server rejects the
+/// request its human-readable `error_description` is returned through
+/// `description_out` (caller frees). Only rejection text is captured; codes
+/// and state are never copied there.
+pub fn parseLoopbackRequestDetailed(allocator: std.mem.Allocator, request_line: []const u8, expected_state: []const u8, description_out: *?[]u8) !Callback {
     if (request_line.len > 16 * 1024) return error.CallbackTooLarge;
     if (expected_state.len == 0) return error.InvalidExpectedState;
     var parts = std.mem.splitScalar(u8, request_line, ' ');
@@ -124,6 +143,8 @@ pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const 
     var state_seen = false;
     var authorization_error: ?[]u8 = null;
     errdefer if (authorization_error) |value| allocator.free(value);
+    var description: ?[]u8 = null;
+    errdefer if (description) |value| allocator.free(value);
     var fields = std.mem.splitScalar(u8, query, '&');
     while (fields.next()) |field| {
         const separator = std.mem.indexOfScalar(u8, field, '=') orelse continue;
@@ -143,12 +164,19 @@ pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const 
         } else if (std.mem.eql(u8, name, "error")) {
             if (authorization_error != null) return error.DuplicateAuthorizationError;
             authorization_error = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, name, "error_description")) {
+            if (description != null) return error.DuplicateAuthorizationError;
+            if (value.len > 0 and value.len <= 1024) description = try allocator.dupe(u8, sanitizeDescription(value));
         }
     }
     if (!state_valid) return error.StateMismatch;
     if (authorization_error) |rejection| {
         authorization_error = null;
         defer allocator.free(rejection);
+        if (description_out.* == null) {
+            description_out.* = description;
+            description = null;
+        }
         if (std.mem.eql(u8, rejection, "invalid_scope")) return error.InvalidScope;
         if (std.mem.eql(u8, rejection, "access_denied")) return error.AccessDenied;
         if (std.mem.eql(u8, rejection, "unauthorized_client")) return error.UnauthorizedClient;
@@ -392,6 +420,17 @@ test "loopback callback requires exact state and handles percent encoding" {
     try std.testing.expectError(error.InvalidScope, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=invalid_scope&state=expected HTTP/1.1", "expected"));
     try std.testing.expectError(error.UnauthorizedClient, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=unauthorized_client&state=expected HTTP/1.1", "expected"));
     try std.testing.expectError(error.StateMismatch, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=access_denied&state=wrong HTTP/1.1", "expected"));
+}
+
+test "loopback callback surfaces the server's error_description" {
+    var description: ?[]u8 = null;
+    defer if (description) |value| std.testing.allocator.free(value);
+    try std.testing.expectError(error.AccessDenied, parseLoopbackRequestDetailed(std.testing.allocator, "GET /callback?error=access_denied&error_description=Please%20verify%20your%20email%0Abefore+continuing&state=expected HTTP/1.1", "expected", &description));
+    try std.testing.expectEqualStrings("Please verify your email before continuing", description.?);
+    var none: ?[]u8 = null;
+    const ok = try parseLoopbackRequestDetailed(std.testing.allocator, "GET /callback?code=abc&state=expected HTTP/1.1", "expected", &none);
+    defer ok.deinit();
+    try std.testing.expect(none == null);
 }
 
 test "token parsing requires a rotated refresh token" {

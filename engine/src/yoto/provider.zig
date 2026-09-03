@@ -112,7 +112,9 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
     var reader: std.Io.net.Stream.Reader = .init(stream, io, &read_buffer);
     const request_line = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidCallback;
     const clean_line = std.mem.trimEnd(u8, request_line, "\r");
-    const callback = auth.parseLoopbackRequest(allocator, clean_line, &pending.state) catch |err| {
+    var rejection_description: ?[]u8 = null;
+    defer if (rejection_description) |value| allocator.free(value);
+    const callback = auth.parseLoopbackRequestDetailed(allocator, clean_line, &pending.state, &rejection_description) catch |err| {
         const guidance = switch (err) {
             error.InvalidScope => "Yoto rejected a requested scope. In the developer dashboard, enable family:library:view and user:content:view, save the application, then retry.",
             error.AccessDenied => "Yoto denied this account. Retry and sign in with the adult account that owns the Yoto family, then approve the unverified-app consent screen.",
@@ -122,6 +124,7 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
             else => "Yoto rejected the authorization request. Verify the Public Client, callback URL, and read-only scopes, then retry.",
         };
         writer.print("{s}\n", .{guidance}) catch {};
+        if (rejection_description) |description| writer.print("Yoto's exact reason: {s}\n", .{description}) catch {};
         writer.flush() catch {};
         var write_buffer: [512]u8 = undefined;
         var response: std.Io.net.Stream.Writer = .init(stream, io, &write_buffer);
