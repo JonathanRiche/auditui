@@ -19,6 +19,7 @@ pub const library = @import("api/library.zig");
 pub const downloads = @import("downloads/manager.zig");
 pub const download_jobs = @import("downloads/jobs.zig");
 pub const player = @import("player/mpv.zig");
+pub const now_playing = @import("player/now_playing.zig");
 pub const rpc = @import("protocol/rpc.zig");
 pub const redact = @import("auth/redact.zig");
 pub const cli_support = @import("cli/support.zig");
@@ -46,6 +47,7 @@ test {
     _ = downloads;
     _ = download_jobs;
     _ = player;
+    _ = now_playing;
     _ = rpc;
     _ = redact;
     _ = cli_support;

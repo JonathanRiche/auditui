@@ -10,6 +10,7 @@ const downloads = @import("../downloads/manager.zig");
 const download_jobs = @import("../downloads/jobs.zig");
 const session = @import("../auth/session.zig");
 const mpv = @import("../player/mpv.zig");
+const now_playing = @import("../player/now_playing.zig");
 const database_mod = @import("../storage/database.zig");
 const yoto = @import("../yoto/provider.zig");
 
@@ -73,7 +74,10 @@ pub const Runtime = struct {
         }
         persistPlayback(self) catch {};
         if (self.player) |*child| child.kill(io);
-        if (self.socket_path) |socket_path| std.Io.Dir.cwd().deleteFile(io, socket_path) catch {};
+        if (self.socket_path) |socket_path| {
+            std.Io.Dir.cwd().deleteFile(io, socket_path) catch {};
+            if (std.fs.path.dirname(socket_path)) |state_dir| now_playing.clear(io, state_dir);
+        }
         self.player = null;
         self.socket_path = null;
         self.sleep_deadline = null;
@@ -175,35 +179,7 @@ fn remoteDownload(allocator: std.mem.Allocator, io: std.Io, environ: std.process
 }
 
 fn sendMpv(io: std.Io, socket_path: []const u8, command: mpv.Command) !void {
-    var encoded: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
-    defer {
-        std.crypto.secureZero(u8, encoded.written());
-        encoded.deinit();
-    }
-    try mpv.writeCommand(&encoded.writer, command);
-    const address = try std.Io.net.UnixAddress.init(socket_path);
-    const stream = try address.connect(io);
-    defer stream.close(io);
-    var buffer: [1024]u8 = undefined;
-    var writer: std.Io.net.Stream.Writer = .init(stream, io, &buffer);
-    try writer.interface.writeAll(encoded.written());
-    try writer.interface.flush();
-
-    var read_buffer: [4096]u8 = undefined;
-    var reader: std.Io.net.Stream.Reader = .init(stream, io, &read_buffer);
-    var lines: u8 = 0;
-    while (lines < 16) : (lines += 1) {
-        const line = (try reader.interface.takeDelimiter('\n')) orelse return error.EndOfStream;
-        var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch continue;
-        defer parsed.deinit();
-        if (parsed.value != .object) continue;
-        const request_id = parsed.value.object.get("request_id") orelse continue;
-        if (request_id != .integer or request_id.integer != 1) continue;
-        const result = parsed.value.object.get("error") orelse return error.MpvCommandFailed;
-        if (result != .string or !std.mem.eql(u8, result.string, "success")) return error.MpvCommandFailed;
-        return;
-    }
-    return error.MpvCommandResponseMissing;
+    return mpv.send(io, socket_path, command);
 }
 
 fn waitForSocket(io: std.Io, socket_path: []const u8) !void {
@@ -1150,6 +1126,21 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
             runtime.socket_path = socket_path;
             runtime.profile_name = try allocator.dupe(u8, account);
             runtime.provider_id = provider_id;
+            {
+                // Desktop integrations read this file; it never carries the
+                // media source (a signed Yoto URL or local path), only a cover
+                // image that already sits beside a local download.
+                const cover = if (local_path_param != null) now_playing.existingCover(allocator, io, source) else null;
+                defer if (cover) |value| allocator.free(value);
+                now_playing.write(allocator, io, xdg.state, .{
+                    .provider = provider_id,
+                    .account = account,
+                    .itemId = runtime.item_id.?,
+                    .title = runtime.title.?,
+                    .coverPath = cover,
+                    .startedAt = std.Io.Clock.real.now(io).toSeconds(),
+                }) catch {};
+            }
             if (runtime.database) |database| {
                 database.putProvider(provider_id, if (std.mem.eql(u8, provider_id, "yoto")) "Yoto" else "Audible") catch {};
                 database.putAccount(.{ .identity = .{ .provider_id = provider_id, .account_id = account }, .display_name = account }) catch {};

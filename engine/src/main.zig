@@ -23,6 +23,8 @@ const help =
     \\  quickstart               Configure a profile interactively
     \\  auth login --provider yoto
     \\                            Connect Yoto with browser OAuth + PKCE
+    \\  player status|toggle|pause|play|next|previous|forward|back
+    \\                            Inspect or drive the active player (desktop widgets)
     \\  internal health|rpc      Machine-facing integration
     \\
     \\Quickstart options:
@@ -657,6 +659,30 @@ fn validateRequiredOptionValues(args: []const []const u8) !void {
     }
 }
 
+/// `player status` prints one JSON snapshot for desktop integrations; the
+/// other verbs drive mpv over its IPC socket and then print the new snapshot.
+fn playerCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, args: []const []const u8) !void {
+    const state_dir = try engine.now_playing.stateDir(allocator, environ);
+    defer allocator.free(state_dir);
+    if (std.mem.eql(u8, args[0], "status")) return engine.now_playing.writeSnapshot(allocator, io, state_dir, writer);
+    const action = engine.now_playing.Action.parse(args[0]) orelse {
+        std.debug.print("audible-zig: unknown player action '{s}' (expected status, toggle, pause, play, next, previous, forward, back)\n", .{args[0]});
+        return error.UnknownPlayerAction;
+    };
+    var seconds = engine.now_playing.default_seek_seconds;
+    if (args.len >= 2 and !std.mem.startsWith(u8, args[1], "-")) {
+        seconds = std.fmt.parseFloat(f64, args[1]) catch return error.InvalidSeekSeconds;
+        if (!(seconds > 0 and seconds <= 3600)) return error.InvalidSeekSeconds;
+    }
+    engine.now_playing.control(allocator, io, state_dir, writer, action, seconds) catch |err| switch (err) {
+        error.NoActivePlayer => {
+            try writer.writeAll("{\"state\":\"stopped\"}\n");
+            return;
+        },
+        else => return err,
+    };
+}
+
 fn run(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
@@ -676,6 +702,7 @@ fn run(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "internal") and tail.len >= 1 and std.mem.eql(u8, tail[0], "health")) return writeHealth(stdout);
     if (std.mem.eql(u8, command, "internal") and tail.len >= 2 and std.mem.eql(u8, tail[0], "download-worker")) return engine.rpc.runDownloadWorker(allocator, init.io, init.minimal.environ, stdout, tail[1]);
     if (std.mem.eql(u8, command, "internal") and tail.len >= 1 and std.mem.eql(u8, tail[0], "rpc")) return rpcLoop(allocator, init.io, init.minimal.environ, stdout);
+    if (std.mem.eql(u8, command, "player") and tail.len >= 1) return playerCommand(allocator, init.io, init.minimal.environ, stdout, tail);
     if (std.mem.eql(u8, command, "auth") and tail.len >= 1 and std.mem.eql(u8, tail[0], "login")) return yotoLoginCommand(allocator, init.io, init.minimal.environ, stdout, tail[1..]);
     if (std.mem.eql(u8, command, "api") and tail.len >= 1) return apiCommand(allocator, init.io, init.minimal.environ, stdout, tail[0], all_options);
     if (std.mem.eql(u8, command, "activation-bytes")) return activationBytesCommand(allocator, init.io, init.minimal.environ, stdout, all_options);

@@ -144,6 +144,39 @@ fn jsonNumber(value: std.json.Value) ?f64 {
     };
 }
 
+/// Send one command to mpv's JSON IPC socket and wait for its acknowledgement.
+pub fn send(io: std.Io, socket_path: []const u8, command: Command) !void {
+    var encoded: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
+    defer {
+        std.crypto.secureZero(u8, encoded.written());
+        encoded.deinit();
+    }
+    try writeCommand(&encoded.writer, command);
+    const address = try std.Io.net.UnixAddress.init(socket_path);
+    const stream = try address.connect(io);
+    defer stream.close(io);
+    var buffer: [1024]u8 = undefined;
+    var writer: std.Io.net.Stream.Writer = .init(stream, io, &buffer);
+    try writer.interface.writeAll(encoded.written());
+    try writer.interface.flush();
+
+    var read_buffer: [4096]u8 = undefined;
+    var reader: std.Io.net.Stream.Reader = .init(stream, io, &read_buffer);
+    var lines: u8 = 0;
+    while (lines < 16) : (lines += 1) {
+        const line = (try reader.interface.takeDelimiter('\n')) orelse return error.EndOfStream;
+        var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, line, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const request_id = parsed.value.object.get("request_id") orelse continue;
+        if (request_id != .integer or request_id.integer != 1) continue;
+        const result = parsed.value.object.get("error") orelse return error.MpvCommandFailed;
+        if (result != .string or !std.mem.eql(u8, result.string, "success")) return error.MpvCommandFailed;
+        return;
+    }
+    return error.MpvCommandResponseMissing;
+}
+
 pub fn resumePosition(position: f64, duration: f64) f64 {
     if (duration > 0 and duration - position <= 30) return 0;
     return @max(position, 0);

@@ -8,7 +8,12 @@
     "audibleLibraryVersion": "0.12.0",
     "audibleLibraryCommit": "97575861ff03528013b1c8a77e68a238ea456951"
   },
-  "statusValues": ["unimplemented", "partial", "compatible", "intentional-deviation"],
+  "statusValues": [
+    "unimplemented",
+    "partial",
+    "compatible",
+    "intentional-deviation"
+  ],
   "commonExitBehavior": {
     "success": 0,
     "clickUsageError": 2,
@@ -20,65 +25,118 @@
     {
       "path": "audible",
       "status": "intentional-deviation",
-      "options": ["--profile/-P", "--version", "--help/-h", "--verbose/-v"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--profile/-P",
+        "--version",
+        "--help/-h",
+        "--verbose/-v"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#human CLI root contract",
       "reason": "Profile placement, help, and version are stable, but password argv is forbidden, Python log-file/verbosity choices are omitted, and usage failures return 1 rather than Click's 2."
     },
     {
       "path": "audible activation-bytes",
       "status": "intentional-deviation",
-      "options": ["--reload/-r"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--reload/-r"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#human CLI root contract",
       "reason": "Cached and live retrieval are implemented, but a newly fetched value is not written back into the auth file."
     },
     {
       "path": "audible api",
       "status": "intentional-deviation",
-      "arguments": ["ENDPOINT"],
-      "options": ["--method/-m", "--param/-p", "--body/-b", "--output/-o"],
-      "outputModes": ["json-body", "file"],
+      "arguments": [
+        "ENDPOINT"
+      ],
+      "options": [
+        "--method/-m",
+        "--param/-p",
+        "--body/-b",
+        "--output/-o"
+      ],
+      "outputModes": [
+        "json-body",
+        "file"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#network commands validate locally before transport",
       "reason": "Authenticated GET/POST/PUT/DELETE, repeated parameters, JSON validation, and file output exist; Python-dict formatting, indentation, and marketplace override do not."
     },
     {
       "path": "audible download",
       "status": "intentional-deviation",
-      "options": ["--output-dir/-o", "--all", "--asin/-a", "--title/-t", "--aaxc"],
-      "outputModes": ["durable-background-job", "files:aaxc+voucher", "metadata-sidecars"],
+      "options": [
+        "--output-dir/-o",
+        "--all",
+        "--asin/-a",
+        "--title/-t",
+        "--aaxc"
+      ],
+      "outputModes": [
+        "durable-background-job",
+        "files:aaxc+voucher",
+        "metadata-sidecars"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "The native command queues durable AAXC jobs. Legacy AAX, synchronous progress, Python filename modes, podcast expansion, and baseline option-for-option behavior are replaced by the application download manager."
     },
     {
       "path": "audible library",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Group help is consolidated into root help and the native group adds explicit refresh."
     },
     {
       "path": "audible library list",
       "status": "intentional-deviation",
-      "options": ["--start-date", "--end-date"],
-      "outputModes": ["terminal-lines"],
+      "options": [
+        "--start-date",
+        "--end-date"
+      ],
+      "outputModes": [
+        "terminal-lines"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#isolated library list and exports",
       "reason": "Listing reads the atomic cache with inclusive dates; pagination, timeout, and podcast expansion belong to explicit refresh rather than list."
     },
     {
       "path": "audible library export",
       "status": "intentional-deviation",
-      "options": ["--output/-o", "--format/-f", "--start-date", "--end-date"],
-      "outputModes": ["json-file", "csv-file", "tsv-file"],
+      "options": [
+        "--output/-o",
+        "--format/-f",
+        "--start-date",
+        "--end-date"
+      ],
+      "outputModes": [
+        "json-file",
+        "csv-file",
+        "tsv-file"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#isolated library list and exports",
       "reason": "Formats, quoting, extension replacement, and dates are implemented from cache; baseline network and podcast flags are not export behavior."
     },
     {
       "path": "audible wishlist",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Group help is consolidated into root help."
     },
@@ -86,49 +144,76 @@
       "path": "audible wishlist list",
       "status": "intentional-deviation",
       "options": [],
-      "outputModes": ["service-order-terminal-lines"],
+      "outputModes": [
+        "service-order-terminal-lines"
+      ],
       "verification": "engine/src/main.zig#wishlistCommand",
       "reason": "Authenticated listing exists but preserves service order and omits the Python timeout option."
     },
     {
       "path": "audible wishlist export",
       "status": "intentional-deviation",
-      "options": ["--output/-o", "--format/-f"],
-      "outputModes": ["json-file", "csv-file", "tsv-file"],
+      "options": [
+        "--output/-o",
+        "--format/-f"
+      ],
+      "outputModes": [
+        "json-file",
+        "csv-file",
+        "tsv-file"
+      ],
       "verification": "engine/src/main.zig#wishlistCommand",
       "reason": "Export exists but omits the Python timeout and Click-identical diagnostics."
     },
     {
       "path": "audible wishlist add",
       "status": "intentional-deviation",
-      "options": ["--asin/-a", "--yes"],
+      "options": [
+        "--asin/-a",
+        "--yes"
+      ],
       "prompts": "none",
-      "outputModes": ["terminal"],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#network commands validate locally before transport",
       "reason": "An explicit ASIN and --yes are mandatory; title matching and interactive selection are omitted to prevent ambiguous account mutation."
     },
     {
       "path": "audible wishlist remove",
       "status": "intentional-deviation",
-      "options": ["--asin/-a", "--yes"],
+      "options": [
+        "--asin/-a",
+        "--yes"
+      ],
       "prompts": "none",
-      "outputModes": ["terminal"],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#network commands validate locally before transport",
       "reason": "An explicit ASIN and --yes are mandatory; title matching and interactive selection are omitted to prevent ambiguous account mutation."
     },
     {
       "path": "audible manage",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Nested group help is consolidated into root help."
     },
     {
       "path": "audible manage config",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Nested group help is consolidated into root help."
     },
@@ -136,24 +221,36 @@
       "path": "audible manage config edit",
       "status": "intentional-deviation",
       "options": [],
-      "outputModes": ["external-editor"],
+      "outputModes": [
+        "external-editor"
+      ],
       "verification": "engine/src/main.zig#configEdit",
       "reason": "Only a single EDITOR executable is allowed; shell fragments and multiword commands are rejected as an injection defense."
     },
     {
       "path": "audible manage profile",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Nested group help is consolidated into root help."
     },
     {
       "path": "audible manage profile add",
       "status": "intentional-deviation",
-      "arguments": ["SOURCE", "NAME"],
+      "arguments": [
+        "SOURCE",
+        "NAME"
+      ],
       "options": [],
-      "outputModes": ["private-profile-copy", "terminal"],
+      "outputModes": [
+        "private-profile-copy",
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#profile discovery, import, and local removal safety",
       "reason": "Native add/import is noninteractive, positional, permission-checked, and no-overwrite; browser-created profiles use quickstart."
     },
@@ -161,69 +258,119 @@
       "path": "audible manage profile list",
       "status": "intentional-deviation",
       "options": [],
-      "outputModes": ["profile-and-permission-lines"],
+      "outputModes": [
+        "profile-and-permission-lines"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#profile discovery, import, and local removal safety",
       "reason": "Native and legacy discovery with secure-permission status exists; Python TOML primary-profile annotations are not emitted."
     },
     {
       "path": "audible manage profile remove",
       "status": "intentional-deviation",
-      "options": ["--profile/-P", "--yes"],
-      "outputModes": ["local-delete", "terminal"],
+      "options": [
+        "--profile/-P",
+        "--yes"
+      ],
+      "outputModes": [
+        "local-delete",
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#profile discovery, import, and local removal safety",
       "reason": "Removal is confirmed and local-only; it never silently deregisters the Audible device."
     },
     {
       "path": "audible manage auth-file",
       "status": "intentional-deviation",
-      "options": ["--help/-h"],
-      "outputModes": ["terminal"],
+      "options": [
+        "--help/-h"
+      ],
+      "outputModes": [
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#documented native CLI deviations",
       "reason": "Nested group help is consolidated into root help."
     },
     {
       "path": "audible manage auth-file add",
       "status": "intentional-deviation",
-      "options": ["--profile/-P", "--country-code/-cc", "--no-encryption"],
+      "options": [
+        "--profile/-P",
+        "--country-code/-cc",
+        "--no-encryption"
+      ],
       "prompts": "external-browser callback and hidden encryption-passphrase confirmation",
-      "outputModes": ["encrypted-or-private-auth-file", "terminal"],
+      "outputModes": [
+        "encrypted-or-private-auth-file",
+        "terminal"
+      ],
       "verification": "docs/feasibility.md",
       "reason": "Only external-browser PKCE is supported. Username/password argv and automated credential entry are deliberately unsupported."
     },
     {
       "path": "audible manage auth-file remove",
       "status": "intentional-deviation",
-      "options": ["--auth-file/-f", "--yes"],
-      "outputModes": ["local-delete", "terminal"],
+      "options": [
+        "--auth-file/-f",
+        "--yes"
+      ],
+      "outputModes": [
+        "local-delete",
+        "terminal"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#auth-file transformation",
       "reason": "Confirmed local deletion is implemented, but remote device deregistration is deliberately not coupled to it."
     },
     {
       "path": "audible manage auth-file encrypt",
       "status": "intentional-deviation",
-      "options": ["--auth-file/-f"],
+      "options": [
+        "--auth-file/-f"
+      ],
       "prompts": "hidden controlling-terminal passphrase and confirmation",
-      "outputModes": ["in-place-private-auth-file"],
+      "outputModes": [
+        "in-place-private-auth-file"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#auth-file transformation",
       "reason": "The file format interoperates, but passphrases are never accepted from argv or ordinary stdin."
     },
     {
       "path": "audible manage auth-file decrypt",
       "status": "intentional-deviation",
-      "options": ["--auth-file/-f"],
+      "options": [
+        "--auth-file/-f"
+      ],
       "prompts": "hidden controlling-terminal passphrase",
-      "outputModes": ["in-place-private-auth-file"],
+      "outputModes": [
+        "in-place-private-auth-file"
+      ],
       "verification": "integration-tests/cli-compat.test.ts#auth-file transformation",
       "reason": "The file format interoperates, but passphrases are never accepted from argv or ordinary stdin."
     },
     {
       "path": "audible quickstart",
       "status": "intentional-deviation",
-      "options": ["--profile/-P", "--country-code/-cc", "--no-encryption"],
+      "options": [
+        "--profile/-P",
+        "--country-code/-cc",
+        "--no-encryption"
+      ],
       "prompts": "external-browser callback and optional hidden passphrase confirmation",
-      "outputModes": ["encrypted-or-private-auth-file", "terminal"],
+      "outputModes": [
+        "encrypted-or-private-auth-file",
+        "terminal"
+      ],
       "verification": "docs/feasibility.md",
       "reason": "The native flow is external-browser-only, has application-specific defaults, and never accepts Amazon credentials or encryption passwords in argv."
+    },
+    {
+      "path": "audible player",
+      "status": "intentional-deviation",
+      "options": [],
+      "outputModes": [
+        "json-snapshot-line"
+      ],
+      "verification": "engine/src/main.zig#playerCommand",
+      "reason": "Auditui-only addition with no Python audible-cli counterpart: `player status` prints one now-playing JSON line and `player toggle|pause|play|next|previous|forward|back` drive the local mpv session for desktop widgets. It never prints media sources or credentials."
     }
   ],
   "additionalBehavior": [

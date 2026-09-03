@@ -14,6 +14,8 @@ Usage:
   auditui auth login [OPTIONS]    Connect an Audible or Yoto account
   auditui auth status             Show local Audible profiles
   auditui library refresh [OPTS]  Refresh an Audible or Yoto library
+  auditui player status           Print the now-playing snapshot as JSON
+  auditui player ACTION [SECS]    toggle|pause|play|next|previous|forward|back
   auditui doctor                  Check required runtime components
   auditui cli COMMAND ...         Run the native provider CLI
   auditui --version               Show the installed version
@@ -128,6 +130,11 @@ case "$command" in
     shift
     [ "$#" -gt 0 ] || set -- list
     exec "$auditui_engine" library "$@"
+    ;;
+  player)
+    shift
+    [ "$#" -gt 0 ] || set -- status
+    exec "$auditui_engine" player "$@"
     ;;
   doctor)
     "$auditui_engine" internal health
