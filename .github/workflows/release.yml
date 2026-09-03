@@ -15,6 +15,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      SDL_AUDIODRIVER: dummy
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4
@@ -23,7 +25,7 @@ jobs:
       - name: Configure headless audio
         run: |
           mkdir -p "${HOME}/.config/mpv"
-          printf '%s\n' 'ao=null' > "${HOME}/.config/mpv/mpv.conf"
+          printf '%s\n' 'ao=sdl' > "${HOME}/.config/mpv/mpv.conf"
       - name: Verify tag matches the application version
         shell: bash
         run: |
