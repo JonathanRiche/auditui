@@ -1,5 +1,8 @@
 pub const paths = @import("storage/paths.zig");
 pub const database = @import("storage/database.zig");
+pub const provider_model = @import("providers/model.zig");
+pub const provider_interface = @import("providers/interface.zig");
+pub const protocol_model = @import("protocol/model.zig");
 pub const profiles = @import("auth/profiles.zig");
 pub const session = @import("auth/session.zig");
 pub const external_auth = @import("auth/external.zig");
@@ -23,6 +26,9 @@ pub const cli_support = @import("cli/support.zig");
 test {
     _ = paths;
     _ = database;
+    _ = provider_model;
+    _ = provider_interface;
+    _ = protocol_model;
     _ = profiles;
     _ = session;
     _ = external_auth;

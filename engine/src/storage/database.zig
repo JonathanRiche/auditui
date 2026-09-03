@@ -1,4 +1,5 @@
 const std = @import("std");
+const provider_model = @import("../providers/model.zig");
 
 pub const Error = error{ SqliteFailure, MigrationFailed, InvalidText };
 
@@ -20,6 +21,31 @@ pub const DownloadJob = struct {
     error_message: ?[]const u8 = null,
     created_at: i64,
     updated_at: i64,
+};
+
+pub const ProviderDownloadJob = struct {
+    id: []const u8,
+    account: provider_model.AccountIdentity,
+    item_id: []const u8,
+    title: []const u8,
+    kind: []const u8,
+    destination: []const u8,
+    status: []const u8,
+    bytes_downloaded: u64 = 0,
+    total_bytes: ?u64 = null,
+    error_message: ?[]const u8 = null,
+    created_at: i64,
+    updated_at: i64,
+};
+
+pub const OwnedAccountIdentity = struct {
+    provider_id: []u8,
+    account_id: []u8,
+
+    pub fn deinit(self: OwnedAccountIdentity, allocator: std.mem.Allocator) void {
+        allocator.free(self.provider_id);
+        allocator.free(self.account_id);
+    }
 };
 
 pub const Bookmark = struct {
@@ -79,6 +105,79 @@ const migrations = [_][]const u8{
     \\CREATE TABLE settings (
     \\ key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT(unixepoch())
     \\);
+    ,
+    \\CREATE TABLE providers (
+    \\ id TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    \\ created_at INTEGER NOT NULL DEFAULT(unixepoch()), updated_at INTEGER NOT NULL DEFAULT(unixepoch())
+    \\);
+    \\CREATE TABLE provider_accounts (
+    \\ provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE, account_id TEXT NOT NULL,
+    \\ display_name TEXT NOT NULL, marketplace TEXT, locale TEXT, metadata_json TEXT,
+    \\ is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0,1)),
+    \\ created_at INTEGER NOT NULL DEFAULT(unixepoch()), updated_at INTEGER NOT NULL DEFAULT(unixepoch()),
+    \\ PRIMARY KEY(provider_id,account_id)
+    \\);
+    \\CREATE UNIQUE INDEX provider_accounts_one_default ON provider_accounts(is_default) WHERE is_default=1;
+    \\CREATE TABLE provider_items (
+    \\ provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE, item_id TEXT NOT NULL,
+    \\ title TEXT NOT NULL, subtitle TEXT, creators_json TEXT NOT NULL DEFAULT '[]',
+    \\ narrators_json TEXT NOT NULL DEFAULT '[]', cover_url TEXT, duration_seconds INTEGER,
+    \\ release_date TEXT, metadata_json TEXT, updated_at INTEGER NOT NULL DEFAULT(unixepoch()),
+    \\ PRIMARY KEY(provider_id,item_id)
+    \\);
+    \\CREATE INDEX provider_items_title ON provider_items(provider_id,title COLLATE NOCASE);
+    \\CREATE TABLE account_library_items (
+    \\ provider_id TEXT NOT NULL, account_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    \\ acquired_at INTEGER, updated_at INTEGER NOT NULL DEFAULT(unixepoch()),
+    \\ PRIMARY KEY(provider_id,account_id,item_id),
+    \\ FOREIGN KEY(provider_id,account_id) REFERENCES provider_accounts(provider_id,account_id) ON DELETE CASCADE,
+    \\ FOREIGN KEY(provider_id,item_id) REFERENCES provider_items(provider_id,item_id) ON DELETE CASCADE
+    \\);
+    \\CREATE TABLE provider_local_files (
+    \\ id INTEGER PRIMARY KEY, provider_id TEXT NOT NULL, account_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    \\ kind TEXT NOT NULL, path TEXT NOT NULL UNIQUE, size_bytes INTEGER, checksum TEXT, completed_at INTEGER,
+    \\ FOREIGN KEY(provider_id,account_id,item_id) REFERENCES account_library_items(provider_id,account_id,item_id) ON DELETE CASCADE
+    \\);
+    \\CREATE TABLE provider_download_jobs (
+    \\ provider_id TEXT NOT NULL, id TEXT NOT NULL, account_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    \\ kind TEXT NOT NULL, destination TEXT NOT NULL,
+    \\ status TEXT NOT NULL CHECK(status IN ('queued','running','paused','completed','failed','cancelled')),
+    \\ bytes_downloaded INTEGER NOT NULL DEFAULT 0 CHECK(bytes_downloaded>=0), total_bytes INTEGER,
+    \\ etag TEXT, last_modified TEXT, error_message TEXT,
+    \\ created_at INTEGER NOT NULL DEFAULT(unixepoch()), updated_at INTEGER NOT NULL DEFAULT(unixepoch()),
+    \\ PRIMARY KEY(provider_id,id),
+    \\ FOREIGN KEY(provider_id,account_id,item_id) REFERENCES account_library_items(provider_id,account_id,item_id) ON DELETE CASCADE
+    \\);
+    \\CREATE INDEX provider_download_jobs_status ON provider_download_jobs(provider_id,status,updated_at);
+    \\CREATE TABLE provider_playback_positions (
+    \\ provider_id TEXT NOT NULL, account_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    \\ position_seconds REAL NOT NULL DEFAULT 0 CHECK(position_seconds>=0), duration_seconds REAL,
+    \\ updated_at INTEGER NOT NULL DEFAULT(unixepoch()), PRIMARY KEY(provider_id,account_id,item_id),
+    \\ FOREIGN KEY(provider_id,account_id,item_id) REFERENCES account_library_items(provider_id,account_id,item_id) ON DELETE CASCADE
+    \\);
+    \\CREATE TABLE provider_bookmarks (
+    \\ id INTEGER PRIMARY KEY, provider_id TEXT NOT NULL, account_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    \\ position_seconds REAL NOT NULL CHECK(position_seconds>=0), label TEXT,
+    \\ created_at INTEGER NOT NULL DEFAULT(unixepoch()),
+    \\ FOREIGN KEY(provider_id,account_id,item_id) REFERENCES account_library_items(provider_id,account_id,item_id) ON DELETE CASCADE
+    \\);
+    \\CREATE INDEX provider_bookmarks_item_position ON provider_bookmarks(provider_id,account_id,item_id,position_seconds);
+    \\INSERT INTO providers(id,display_name) VALUES('audible','Audible');
+    \\INSERT INTO provider_accounts(provider_id,account_id,display_name,marketplace,locale,is_default,created_at,updated_at)
+    \\ SELECT 'audible',name,name,marketplace,locale,is_default,created_at,updated_at FROM profiles;
+    \\INSERT INTO provider_items(provider_id,item_id,title,subtitle,creators_json,narrators_json,cover_url,duration_seconds,release_date,metadata_json,updated_at)
+    \\ SELECT 'audible',asin,MAX(title),MAX(subtitle),MAX(authors_json),MAX(narrators_json),MAX(cover_url),MAX(duration_seconds),MAX(release_date),MAX(metadata_json),MAX(updated_at)
+    \\ FROM library_items GROUP BY asin;
+    \\INSERT INTO account_library_items(provider_id,account_id,item_id,updated_at)
+    \\ SELECT 'audible',p.name,l.asin,l.updated_at FROM library_items l JOIN profiles p ON p.id=l.profile_id;
+    \\INSERT INTO provider_local_files(id,provider_id,account_id,item_id,kind,path,size_bytes,checksum,completed_at)
+    \\ SELECT f.id,'audible',p.name,f.asin,f.kind,f.path,f.size_bytes,f.checksum,f.completed_at FROM local_files f JOIN profiles p ON p.id=f.profile_id;
+    \\INSERT INTO provider_download_jobs(provider_id,id,account_id,item_id,kind,destination,status,bytes_downloaded,total_bytes,etag,last_modified,error_message,created_at,updated_at)
+    \\ SELECT 'audible',j.id,p.name,j.asin,j.kind,j.destination,j.status,j.bytes_downloaded,j.total_bytes,j.etag,j.last_modified,j.error_message,j.created_at,j.updated_at FROM download_jobs j JOIN profiles p ON p.id=j.profile_id;
+    \\INSERT INTO provider_playback_positions(provider_id,account_id,item_id,position_seconds,duration_seconds,updated_at)
+    \\ SELECT 'audible',p.name,x.asin,x.position_seconds,x.duration_seconds,x.updated_at FROM playback_positions x JOIN profiles p ON p.id=x.profile_id;
+    \\INSERT INTO provider_bookmarks(id,provider_id,account_id,item_id,position_seconds,label,created_at)
+    \\ SELECT b.id,'audible',p.name,b.asin,b.position_seconds,b.label,b.created_at FROM bookmarks b JOIN profiles p ON p.id=b.profile_id;
 };
 
 /// SQLite is invoked with an argument vector, never through a shell. This
@@ -139,6 +238,282 @@ pub const Database = struct {
         return value;
     }
 
+    pub fn putProvider(self: *Database, provider_id: []const u8, display_name: []const u8) !void {
+        try provider_model.validateId(provider_id);
+        const q_provider = try quoteText(self.allocator, provider_id);
+        defer self.allocator.free(q_provider);
+        const q_display = try quoteText(self.allocator, display_name);
+        defer self.allocator.free(q_display);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO providers(id,display_name,updated_at) VALUES({s},{s},unixepoch()) " ++
+                "ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at;",
+            .{ q_provider, q_display },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn putAccount(self: *Database, account: provider_model.Account) !void {
+        try account.identity.validate();
+        const q_provider = try quoteText(self.allocator, account.identity.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_provider_name = try quoteText(self.allocator, account.identity.provider_id);
+        defer self.allocator.free(q_provider_name);
+        const q_account = try quoteText(self.allocator, account.identity.account_id);
+        defer self.allocator.free(q_account);
+        const q_display = try quoteText(self.allocator, account.display_name);
+        defer self.allocator.free(q_display);
+        const q_marketplace = try quoteOptionalText(self.allocator, account.marketplace);
+        defer self.allocator.free(q_marketplace);
+        const q_locale = try quoteOptionalText(self.allocator, account.locale);
+        defer self.allocator.free(q_locale);
+        const q_metadata = try quoteOptionalText(self.allocator, account.metadata_json);
+        defer self.allocator.free(q_metadata);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "BEGIN IMMEDIATE; INSERT INTO providers(id,display_name) VALUES({s},{s}) ON CONFLICT(id) DO NOTHING; " ++
+                "INSERT INTO provider_accounts(provider_id,account_id,display_name,marketplace,locale,metadata_json,updated_at) " ++
+                "VALUES({s},{s},{s},{s},{s},{s},unixepoch()) ON CONFLICT(provider_id,account_id) DO UPDATE SET " ++
+                "display_name=excluded.display_name,marketplace=COALESCE(excluded.marketplace,provider_accounts.marketplace)," ++
+                "locale=COALESCE(excluded.locale,provider_accounts.locale),metadata_json=COALESCE(excluded.metadata_json,provider_accounts.metadata_json),updated_at=excluded.updated_at; COMMIT;",
+            .{ q_provider, q_provider_name, q_provider, q_account, q_display, q_marketplace, q_locale, q_metadata },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn setSelectedAccount(self: *Database, identity: provider_model.AccountIdentity) !void {
+        try identity.validate();
+        const q_provider = try quoteText(self.allocator, identity.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, identity.account_id);
+        defer self.allocator.free(q_account);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "BEGIN IMMEDIATE; UPDATE provider_accounts SET is_default=0 WHERE is_default=1; " ++
+                "UPDATE provider_accounts SET is_default=1,updated_at=unixepoch() WHERE provider_id={s} AND account_id={s}; COMMIT;",
+            .{ q_provider, q_account },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+        try self.putSetting("account.selected.provider", identity.provider_id);
+        try self.putSetting("account.selected.id", identity.account_id);
+    }
+
+    pub fn getSelectedAccount(self: *Database, allocator: std.mem.Allocator) !?OwnedAccountIdentity {
+        const output = try self.run("SELECT hex(provider_id)||'|'||hex(account_id) FROM provider_accounts WHERE is_default=1 LIMIT 1;");
+        defer self.allocator.free(output);
+        const row = std.mem.trim(u8, output, "\r\n");
+        if (row.len == 0) return null;
+        var fields = std.mem.splitScalar(u8, row, '|');
+        const provider_hex = fields.next() orelse return error.SqliteFailure;
+        const account_hex = fields.next() orelse return error.SqliteFailure;
+        const provider_id = try decodeHex(allocator, provider_hex);
+        errdefer allocator.free(provider_id);
+        return .{
+            .provider_id = provider_id,
+            .account_id = try decodeHex(allocator, account_hex),
+        };
+    }
+
+    pub fn putProviderItem(self: *Database, account: provider_model.AccountIdentity, item: provider_model.LibraryItem) !void {
+        try account.validate();
+        try item.identity.validate();
+        if (!std.mem.eql(u8, account.provider_id, item.identity.provider_id)) return error.InvalidProviderIdentity;
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item.identity.item_id);
+        defer self.allocator.free(q_item);
+        const q_title = try quoteText(self.allocator, item.title);
+        defer self.allocator.free(q_title);
+        const q_subtitle = try quoteOptionalText(self.allocator, item.subtitle);
+        defer self.allocator.free(q_subtitle);
+        const q_creators = try quoteText(self.allocator, item.creators_json);
+        defer self.allocator.free(q_creators);
+        const q_narrators = try quoteText(self.allocator, item.narrators_json);
+        defer self.allocator.free(q_narrators);
+        const q_cover = try quoteOptionalText(self.allocator, item.cover_url);
+        defer self.allocator.free(q_cover);
+        const q_release = try quoteOptionalText(self.allocator, item.release_date);
+        defer self.allocator.free(q_release);
+        const q_metadata = try quoteOptionalText(self.allocator, item.metadata_json);
+        defer self.allocator.free(q_metadata);
+        const duration = try sqlOptionalInteger(self.allocator, item.duration_seconds);
+        defer self.allocator.free(duration);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "BEGIN IMMEDIATE; INSERT INTO provider_items(provider_id,item_id,title,subtitle,creators_json,narrators_json,cover_url,duration_seconds,release_date,metadata_json,updated_at) " ++
+                "VALUES({s},{s},{s},{s},{s},{s},{s},{s},{s},{s},unixepoch()) ON CONFLICT(provider_id,item_id) DO UPDATE SET " ++
+                "title=excluded.title,subtitle=excluded.subtitle,creators_json=excluded.creators_json,narrators_json=excluded.narrators_json," ++
+                "cover_url=excluded.cover_url,duration_seconds=excluded.duration_seconds,release_date=excluded.release_date,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at; " ++
+                "INSERT INTO account_library_items(provider_id,account_id,item_id,updated_at) VALUES({s},{s},{s},unixepoch()) " ++
+                "ON CONFLICT(provider_id,account_id,item_id) DO UPDATE SET updated_at=excluded.updated_at; COMMIT;",
+            .{ q_provider, q_item, q_title, q_subtitle, q_creators, q_narrators, q_cover, duration, q_release, q_metadata, q_provider, q_account, q_item },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn putProviderLocalFile(self: *Database, account: provider_model.AccountIdentity, item_id: []const u8, title: []const u8, kind: []const u8, path: []const u8, size_bytes: ?u64, checksum: ?[]const u8) !void {
+        try self.ensureProviderItem(account, item_id, title);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const q_kind = try quoteText(self.allocator, kind);
+        defer self.allocator.free(q_kind);
+        const q_path = try quoteText(self.allocator, path);
+        defer self.allocator.free(q_path);
+        const q_checksum = try quoteOptionalText(self.allocator, checksum);
+        defer self.allocator.free(q_checksum);
+        const size = if (size_bytes) |value| try std.fmt.allocPrint(self.allocator, "{d}", .{value}) else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(size);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO provider_local_files(provider_id,account_id,item_id,kind,path,size_bytes,checksum,completed_at) " ++
+                "VALUES({s},{s},{s},{s},{s},{s},{s},unixepoch()) ON CONFLICT(path) DO UPDATE SET provider_id=excluded.provider_id," ++
+                "account_id=excluded.account_id,item_id=excluded.item_id,kind=excluded.kind,size_bytes=excluded.size_bytes,checksum=excluded.checksum,completed_at=excluded.completed_at;",
+            .{ q_provider, q_account, q_item, q_kind, q_path, size, q_checksum },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn putProviderDownloadJob(self: *Database, job: ProviderDownloadJob) !void {
+        try self.ensureProviderItem(job.account, job.item_id, job.title);
+        const q_provider = try quoteText(self.allocator, job.account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, job.account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, job.item_id);
+        defer self.allocator.free(q_item);
+        const q_id = try quoteText(self.allocator, job.id);
+        defer self.allocator.free(q_id);
+        const q_kind = try quoteText(self.allocator, job.kind);
+        defer self.allocator.free(q_kind);
+        const q_destination = try quoteText(self.allocator, job.destination);
+        defer self.allocator.free(q_destination);
+        const q_status = try quoteText(self.allocator, job.status);
+        defer self.allocator.free(q_status);
+        const q_error = try quoteOptionalText(self.allocator, job.error_message);
+        defer self.allocator.free(q_error);
+        const total = if (job.total_bytes) |value| try std.fmt.allocPrint(self.allocator, "{d}", .{value}) else try self.allocator.dupe(u8, "NULL");
+        defer self.allocator.free(total);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO provider_download_jobs(provider_id,id,account_id,item_id,kind,destination,status,bytes_downloaded,total_bytes,error_message,created_at,updated_at) " ++
+                "VALUES({s},{s},{s},{s},{s},{s},{s},{d},{s},{s},{d},{d}) ON CONFLICT(provider_id,id) DO UPDATE SET " ++
+                "account_id=excluded.account_id,item_id=excluded.item_id,kind=excluded.kind,destination=excluded.destination,status=excluded.status," ++
+                "bytes_downloaded=excluded.bytes_downloaded,total_bytes=excluded.total_bytes,error_message=excluded.error_message,updated_at=excluded.updated_at;",
+            .{ q_provider, q_id, q_account, q_item, q_kind, q_destination, q_status, job.bytes_downloaded, total, q_error, job.created_at, job.updated_at },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn putProviderPlaybackPosition(self: *Database, account: provider_model.AccountIdentity, item_id: []const u8, title: []const u8, position: f64, duration: f64) !void {
+        try self.ensureProviderItem(account, item_id, title);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO provider_playback_positions(provider_id,account_id,item_id,position_seconds,duration_seconds,updated_at) " ++
+                "VALUES({s},{s},{s},{d},{d},unixepoch()) ON CONFLICT(provider_id,account_id,item_id) DO UPDATE SET " ++
+                "position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,updated_at=excluded.updated_at;",
+            .{ q_provider, q_account, q_item, @max(0, position), @max(0, duration) },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn getProviderPlaybackPosition(self: *Database, account: provider_model.AccountIdentity, item_id: []const u8) !?PlaybackPosition {
+        try account.validate();
+        try provider_model.validateId(item_id);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT position_seconds,COALESCE(duration_seconds,0) FROM provider_playback_positions WHERE provider_id={s} AND account_id={s} AND item_id={s};",
+            .{ q_provider, q_account, q_item },
+        );
+        defer self.allocator.free(sql);
+        const output = try self.run(sql);
+        defer self.allocator.free(output);
+        const row = std.mem.trim(u8, output, "\r\n");
+        if (row.len == 0) return null;
+        var fields = std.mem.splitScalar(u8, row, '|');
+        return .{
+            .position_seconds = std.fmt.parseFloat(f64, fields.next() orelse return error.SqliteFailure) catch return error.SqliteFailure,
+            .duration_seconds = std.fmt.parseFloat(f64, fields.next() orelse return error.SqliteFailure) catch return error.SqliteFailure,
+        };
+    }
+
+    pub fn addProviderBookmark(self: *Database, account: provider_model.AccountIdentity, item_id: []const u8, title: []const u8, position: f64, label: ?[]const u8) !i64 {
+        try self.ensureProviderItem(account, item_id, title);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const q_label = try quoteOptionalText(self.allocator, label);
+        defer self.allocator.free(q_label);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "INSERT INTO provider_bookmarks(provider_id,account_id,item_id,position_seconds,label) VALUES({s},{s},{s},{d},{s}); SELECT last_insert_rowid();",
+            .{ q_provider, q_account, q_item, @max(0, position), q_label },
+        );
+        defer self.allocator.free(sql);
+        const output = try self.run(sql);
+        defer self.allocator.free(output);
+        return std.fmt.parseInt(i64, std.mem.trim(u8, output, "\r\n"), 10) catch error.SqliteFailure;
+    }
+
+    pub fn deleteProviderBookmark(self: *Database, account: provider_model.AccountIdentity, id: i64) !void {
+        try account.validate();
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const sql = try std.fmt.allocPrint(self.allocator, "DELETE FROM provider_bookmarks WHERE id={d} AND provider_id={s} AND account_id={s};", .{ id, q_provider, q_account });
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
+    pub fn listProviderBookmarks(self: *Database, allocator: std.mem.Allocator, account: provider_model.AccountIdentity, item_id: []const u8) ![]Bookmark {
+        try account.validate();
+        try provider_model.validateId(item_id);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "SELECT id,position_seconds,hex(COALESCE(label,'')),label IS NOT NULL FROM provider_bookmarks " ++
+                "WHERE provider_id={s} AND account_id={s} AND item_id={s} ORDER BY position_seconds,id;",
+            .{ q_provider, q_account, q_item },
+        );
+        defer self.allocator.free(sql);
+        const output = try self.run(sql);
+        defer self.allocator.free(output);
+        return parseBookmarks(allocator, output);
+    }
+
     pub fn putProfile(self: *Database, name: []const u8, marketplace: ?[]const u8, locale: ?[]const u8) !void {
         const q_name = try quoteText(self.allocator, name);
         defer self.allocator.free(q_name);
@@ -155,6 +530,12 @@ pub const Database = struct {
         );
         defer self.allocator.free(sql);
         try self.execute(sql);
+        try self.putAccount(.{
+            .identity = .{ .provider_id = provider_model.audible_id, .account_id = name },
+            .display_name = name,
+            .marketplace = marketplace,
+            .locale = locale,
+        });
     }
 
     pub fn setSelectedProfile(self: *Database, name: []const u8) !void {
@@ -170,6 +551,7 @@ pub const Database = struct {
         defer self.allocator.free(sql);
         try self.execute(sql);
         try self.putSetting("profile.selected", name);
+        try self.setSelectedAccount(.{ .provider_id = provider_model.audible_id, .account_id = name });
     }
 
     pub fn getSelectedProfile(self: *Database, allocator: std.mem.Allocator) !?[]u8 {
@@ -189,9 +571,9 @@ pub const Database = struct {
         defer self.allocator.free(q_name);
         const sql = try std.fmt.allocPrint(
             self.allocator,
-            "BEGIN IMMEDIATE; DELETE FROM profiles WHERE name={s}; " ++
+            "BEGIN IMMEDIATE; DELETE FROM profiles WHERE name={s}; DELETE FROM provider_accounts WHERE provider_id='audible' AND account_id={s}; " ++
                 "DELETE FROM settings WHERE key='profile.selected' AND value={s}; COMMIT;",
-            .{ q_name, q_name },
+            .{ q_name, q_name, q_name },
         );
         defer self.allocator.free(sql);
         try self.execute(sql);
@@ -229,6 +611,15 @@ pub const Database = struct {
                     "release_date=excluded.release_date,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at;",
                 .{ q_profile, q_asin, q_title, q_authors, q_narrators, q_cover, @as(i64, @intFromFloat(@max(0, item.durationSeconds))), q_release, q_metadata },
             );
+            try batch.writer.print(
+                "INSERT INTO provider_items(provider_id,item_id,title,creators_json,narrators_json,cover_url,duration_seconds,release_date,metadata_json,updated_at) " ++
+                    "VALUES('audible',{s},{s},{s},{s},{s},{d},{s},{s},unixepoch()) ON CONFLICT(provider_id,item_id) DO UPDATE SET " ++
+                    "title=excluded.title,creators_json=excluded.creators_json,narrators_json=excluded.narrators_json,cover_url=excluded.cover_url," ++
+                    "duration_seconds=excluded.duration_seconds,release_date=excluded.release_date,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at; " ++
+                    "INSERT INTO account_library_items(provider_id,account_id,item_id,updated_at) VALUES('audible',{s},{s},unixepoch()) " ++
+                    "ON CONFLICT(provider_id,account_id,item_id) DO UPDATE SET updated_at=excluded.updated_at;",
+                .{ q_asin, q_title, q_authors, q_narrators, q_cover, @as(i64, @intFromFloat(@max(0, item.durationSeconds))), q_release, q_metadata, q_profile, q_asin },
+            );
         }
         try batch.writer.writeAll("COMMIT;");
         try self.execute(batch.written());
@@ -260,8 +651,13 @@ pub const Database = struct {
                 "INSERT INTO local_files(profile_id,asin,kind,path,size_bytes,checksum,completed_at) " ++
                 "VALUES((SELECT id FROM profiles WHERE name={s}),{s},{s},{s},{s},{s},unixepoch()) " ++
                 "ON CONFLICT(path) DO UPDATE SET profile_id=excluded.profile_id,asin=excluded.asin,kind=excluded.kind," ++
-                "size_bytes=excluded.size_bytes,checksum=excluded.checksum,completed_at=excluded.completed_at; COMMIT;",
-            .{ q_profile, q_asin, q_title, q_profile, q_asin, q_kind, q_path, size, q_checksum },
+                "size_bytes=excluded.size_bytes,checksum=excluded.checksum,completed_at=excluded.completed_at; " ++
+                "INSERT INTO provider_items(provider_id,item_id,title) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,item_id) DO UPDATE SET title=excluded.title; " ++
+                "INSERT INTO account_library_items(provider_id,account_id,item_id) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,account_id,item_id) DO NOTHING; " ++
+                "INSERT INTO provider_local_files(provider_id,account_id,item_id,kind,path,size_bytes,checksum,completed_at) " ++
+                "VALUES('audible',{s},{s},{s},{s},{s},{s},unixepoch()) ON CONFLICT(path) DO UPDATE SET provider_id=excluded.provider_id," ++
+                "account_id=excluded.account_id,item_id=excluded.item_id,kind=excluded.kind,size_bytes=excluded.size_bytes,checksum=excluded.checksum,completed_at=excluded.completed_at; COMMIT;",
+            .{ q_profile, q_asin, q_title, q_profile, q_asin, q_kind, q_path, size, q_checksum, q_asin, q_title, q_profile, q_asin, q_profile, q_asin, q_kind, q_path, size, q_checksum },
         );
         defer self.allocator.free(sql);
         try self.execute(sql);
@@ -295,14 +691,21 @@ pub const Database = struct {
                 "VALUES({s},(SELECT id FROM profiles WHERE name={s}),{s},{s},{s},{s},{d},{s},{s},{d},{d}) " ++
                 "ON CONFLICT(id) DO UPDATE SET profile_id=excluded.profile_id,asin=excluded.asin,kind=excluded.kind," ++
                 "destination=excluded.destination,status=excluded.status,bytes_downloaded=excluded.bytes_downloaded," ++
+                "total_bytes=excluded.total_bytes,error_message=excluded.error_message,updated_at=excluded.updated_at; " ++
+                "INSERT INTO provider_items(provider_id,item_id,title) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,item_id) DO UPDATE SET title=excluded.title; " ++
+                "INSERT INTO account_library_items(provider_id,account_id,item_id) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,account_id,item_id) DO NOTHING; " ++
+                "INSERT INTO provider_download_jobs(provider_id,id,account_id,item_id,kind,destination,status,bytes_downloaded,total_bytes,error_message,created_at,updated_at) " ++
+                "VALUES('audible',{s},{s},{s},{s},{s},{s},{d},{s},{s},{d},{d}) ON CONFLICT(provider_id,id) DO UPDATE SET account_id=excluded.account_id," ++
+                "item_id=excluded.item_id,kind=excluded.kind,destination=excluded.destination,status=excluded.status,bytes_downloaded=excluded.bytes_downloaded," ++
                 "total_bytes=excluded.total_bytes,error_message=excluded.error_message,updated_at=excluded.updated_at; COMMIT;",
-            .{ q_profile, q_asin, q_title, q_id, q_profile, q_asin, q_kind, q_destination, q_status, job.bytes_downloaded, total, q_error, job.created_at, job.updated_at },
+            .{ q_profile, q_asin, q_title, q_id, q_profile, q_asin, q_kind, q_destination, q_status, job.bytes_downloaded, total, q_error, job.created_at, job.updated_at, q_asin, q_title, q_profile, q_asin, q_id, q_profile, q_asin, q_kind, q_destination, q_status, job.bytes_downloaded, total, q_error, job.created_at, job.updated_at },
         );
         defer self.allocator.free(sql);
         try self.execute(sql);
     }
 
     pub fn putPlaybackPosition(self: *Database, profile: []const u8, asin: []const u8, title: []const u8, position: f64, duration: f64) !void {
+        try self.putProfile(profile, null, null);
         const q_profile = try quoteText(self.allocator, profile);
         defer self.allocator.free(q_profile);
         const q_asin = try quoteText(self.allocator, asin);
@@ -315,7 +718,11 @@ pub const Database = struct {
             "ON CONFLICT(profile_id,asin) DO UPDATE SET title=excluded.title; " ++
             "INSERT INTO playback_positions(profile_id,asin,position_seconds,duration_seconds,updated_at) " ++
             "VALUES((SELECT id FROM profiles WHERE name={s}),{s},{d},{d},unixepoch()) " ++
-            "ON CONFLICT(profile_id,asin) DO UPDATE SET position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,updated_at=excluded.updated_at; COMMIT;", .{ q_profile, q_profile, q_asin, q_title, q_profile, q_asin, @max(0, position), @max(0, duration) });
+            "ON CONFLICT(profile_id,asin) DO UPDATE SET position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,updated_at=excluded.updated_at; " ++
+            "INSERT INTO provider_items(provider_id,item_id,title) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,item_id) DO UPDATE SET title=excluded.title; " ++
+            "INSERT INTO account_library_items(provider_id,account_id,item_id) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,account_id,item_id) DO NOTHING; " ++
+            "INSERT INTO provider_playback_positions(provider_id,account_id,item_id,position_seconds,duration_seconds,updated_at) VALUES('audible',{s},{s},{d},{d},unixepoch()) " ++
+            "ON CONFLICT(provider_id,account_id,item_id) DO UPDATE SET position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,updated_at=excluded.updated_at; COMMIT;", .{ q_profile, q_profile, q_asin, q_title, q_profile, q_asin, @max(0, position), @max(0, duration), q_asin, q_title, q_profile, q_asin, q_profile, q_asin, @max(0, position), @max(0, duration) });
         defer self.allocator.free(sql);
         try self.execute(sql);
     }
@@ -339,6 +746,7 @@ pub const Database = struct {
     }
 
     pub fn addBookmark(self: *Database, profile: []const u8, asin: []const u8, title: []const u8, position: f64, label: ?[]const u8) !i64 {
+        try self.putProfile(profile, null, null);
         const q_profile = try quoteText(self.allocator, profile);
         defer self.allocator.free(q_profile);
         const q_asin = try quoteText(self.allocator, asin);
@@ -351,8 +759,11 @@ pub const Database = struct {
             "INSERT INTO profiles(name) VALUES({s}) ON CONFLICT(name) DO NOTHING; " ++
             "INSERT INTO library_items(profile_id,asin,title) VALUES((SELECT id FROM profiles WHERE name={s}),{s},{s}) " ++
             "ON CONFLICT(profile_id,asin) DO UPDATE SET title=excluded.title; " ++
+            "INSERT INTO provider_items(provider_id,item_id,title) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,item_id) DO UPDATE SET title=excluded.title; " ++
+            "INSERT INTO account_library_items(provider_id,account_id,item_id) VALUES('audible',{s},{s}) ON CONFLICT(provider_id,account_id,item_id) DO NOTHING; " ++
             "INSERT INTO bookmarks(profile_id,asin,position_seconds,label) VALUES((SELECT id FROM profiles WHERE name={s}),{s},{d},{s}); " ++
-            "SELECT last_insert_rowid(); COMMIT;", .{ q_profile, q_profile, q_asin, q_title, q_profile, q_asin, @max(0, position), q_label });
+            "INSERT INTO provider_bookmarks(id,provider_id,account_id,item_id,position_seconds,label) VALUES(last_insert_rowid(),'audible',{s},{s},{d},{s}); " ++
+            "SELECT last_insert_rowid(); COMMIT;", .{ q_profile, q_profile, q_asin, q_title, q_asin, q_title, q_profile, q_asin, q_profile, q_asin, @max(0, position), q_label, q_profile, q_asin, @max(0, position), q_label });
         defer self.allocator.free(sql);
         const output = try self.run(sql);
         defer self.allocator.free(output);
@@ -362,7 +773,7 @@ pub const Database = struct {
     pub fn deleteBookmark(self: *Database, profile: []const u8, id: i64) !void {
         const q_profile = try quoteText(self.allocator, profile);
         defer self.allocator.free(q_profile);
-        const sql = try std.fmt.allocPrint(self.allocator, "DELETE FROM bookmarks WHERE id={d} AND profile_id=(SELECT id FROM profiles WHERE name={s});", .{ id, q_profile });
+        const sql = try std.fmt.allocPrint(self.allocator, "BEGIN IMMEDIATE; DELETE FROM bookmarks WHERE id={d} AND profile_id=(SELECT id FROM profiles WHERE name={s}); DELETE FROM provider_bookmarks WHERE id={d} AND provider_id='audible' AND account_id={s}; COMMIT;", .{ id, q_profile, id, q_profile });
         defer self.allocator.free(sql);
         try self.execute(sql);
     }
@@ -377,27 +788,7 @@ pub const Database = struct {
         defer self.allocator.free(sql);
         const output = try self.run(sql);
         defer self.allocator.free(output);
-        var result: std.ArrayList(Bookmark) = .empty;
-        errdefer {
-            for (result.items) |bookmark| bookmark.deinit(allocator);
-            result.deinit(allocator);
-        }
-        var lines = std.mem.tokenizeAny(u8, output, "\r\n");
-        while (lines.next()) |line| {
-            var fields = std.mem.splitScalar(u8, line, '|');
-            const id = std.fmt.parseInt(i64, fields.next() orelse return error.SqliteFailure, 10) catch return error.SqliteFailure;
-            const position = std.fmt.parseFloat(f64, fields.next() orelse return error.SqliteFailure) catch return error.SqliteFailure;
-            const label_hex = fields.next() orelse return error.SqliteFailure;
-            const has_label = std.mem.eql(u8, fields.next() orelse return error.SqliteFailure, "1");
-            var label: ?[]u8 = null;
-            if (has_label) {
-                if (label_hex.len % 2 != 0) return error.SqliteFailure;
-                label = try allocator.alloc(u8, label_hex.len / 2);
-                _ = std.fmt.hexToBytes(label.?, label_hex) catch return error.SqliteFailure;
-            }
-            try result.append(allocator, .{ .id = id, .position_seconds = position, .label = label });
-        }
-        return result.toOwnedSlice(allocator);
+        return parseBookmarks(allocator, output);
     }
 
     pub fn migrationVersion(self: *Database) !u32 {
@@ -421,6 +812,31 @@ pub const Database = struct {
             defer self.allocator.free(sql);
             try self.execute(sql);
         }
+    }
+
+    /// Ensures artifact/progress writes have a referentially valid item without
+    /// erasing catalog metadata previously supplied by `putProviderItem`.
+    fn ensureProviderItem(self: *Database, account: provider_model.AccountIdentity, item_id: []const u8, title: []const u8) !void {
+        try account.validate();
+        try provider_model.validateId(item_id);
+        const q_provider = try quoteText(self.allocator, account.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, account.account_id);
+        defer self.allocator.free(q_account);
+        const q_item = try quoteText(self.allocator, item_id);
+        defer self.allocator.free(q_item);
+        const q_title = try quoteText(self.allocator, title);
+        defer self.allocator.free(q_title);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "BEGIN IMMEDIATE; INSERT INTO provider_items(provider_id,item_id,title,updated_at) VALUES({s},{s},{s},unixepoch()) " ++
+                "ON CONFLICT(provider_id,item_id) DO UPDATE SET title=excluded.title,updated_at=excluded.updated_at; " ++
+                "INSERT INTO account_library_items(provider_id,account_id,item_id,updated_at) VALUES({s},{s},{s},unixepoch()) " ++
+                "ON CONFLICT(provider_id,account_id,item_id) DO UPDATE SET updated_at=excluded.updated_at; COMMIT;",
+            .{ q_provider, q_item, q_title, q_provider, q_account, q_item },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
     }
 
     fn run(self: *Database, sql: []const u8) ![]u8 {
@@ -448,6 +864,25 @@ pub const Database = struct {
     }
 };
 
+fn parseBookmarks(allocator: std.mem.Allocator, output: []const u8) ![]Bookmark {
+    var result: std.ArrayList(Bookmark) = .empty;
+    errdefer {
+        for (result.items) |bookmark| bookmark.deinit(allocator);
+        result.deinit(allocator);
+    }
+    var lines = std.mem.tokenizeAny(u8, output, "\r\n");
+    while (lines.next()) |line| {
+        var fields = std.mem.splitScalar(u8, line, '|');
+        const id = std.fmt.parseInt(i64, fields.next() orelse return error.SqliteFailure, 10) catch return error.SqliteFailure;
+        const position = std.fmt.parseFloat(f64, fields.next() orelse return error.SqliteFailure) catch return error.SqliteFailure;
+        const label_hex = fields.next() orelse return error.SqliteFailure;
+        const has_label = std.mem.eql(u8, fields.next() orelse return error.SqliteFailure, "1");
+        const label = if (has_label) try decodeHex(allocator, label_hex) else null;
+        try result.append(allocator, .{ .id = id, .position_seconds = position, .label = label });
+    }
+    return result.toOwnedSlice(allocator);
+}
+
 fn quoteText(allocator: std.mem.Allocator, value: []const u8) ![]u8 {
     if (std.mem.indexOfScalar(u8, value, 0) != null) return error.InvalidText;
     var quoted: std.ArrayList(u8) = .empty;
@@ -472,6 +907,18 @@ fn quoteJson(allocator: std.mem.Allocator, value: anytype) ![]u8 {
     return quoteText(allocator, encoded.written());
 }
 
+fn decodeHex(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
+    if (hex.len % 2 != 0) return error.SqliteFailure;
+    const value = try allocator.alloc(u8, hex.len / 2);
+    errdefer allocator.free(value);
+    _ = std.fmt.hexToBytes(value, hex) catch return error.SqliteFailure;
+    return value;
+}
+
+fn sqlOptionalInteger(allocator: std.mem.Allocator, value: ?i64) ![]u8 {
+    return if (value) |present| std.fmt.allocPrint(allocator, "{d}", .{present}) else allocator.dupe(u8, "NULL");
+}
+
 fn openTestDatabase(tmp: *std.testing.TmpDir) !Database {
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
     const length = try tmp.dir.realPath(std.testing.io, &buffer);
@@ -489,6 +936,9 @@ test "migrations create every non-secret state table" {
     const output = try database.run("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('schema_migrations','profiles','library_items','local_files','download_jobs','playback_positions','bookmarks','settings');");
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("8\n", output);
+    const neutral = try database.run("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('providers','provider_accounts','provider_items','account_library_items','provider_local_files','provider_download_jobs','provider_playback_positions','provider_bookmarks');");
+    defer std.testing.allocator.free(neutral);
+    try std.testing.expectEqualStrings("8\n", neutral);
 }
 
 test "reopening an existing database preserves data and does not replay migrations" {
@@ -513,7 +963,7 @@ test "reopening an existing database preserves data and does not replay migratio
         try std.testing.expectEqualStrings("preserved", value);
         const applied = try reopened.run("SELECT count(*) FROM schema_migrations;");
         defer std.testing.allocator.free(applied);
-        try std.testing.expectEqualStrings("1\n", applied);
+        try std.testing.expectEqualStrings("2\n", applied);
     }
 }
 
@@ -643,4 +1093,101 @@ test "profiles library files jobs and selected profile are durably mirrored" {
     const empty = try database.run("SELECT (SELECT count(*) FROM library_items)||'|'||(SELECT count(*) FROM local_files)||'|'||(SELECT count(*) FROM download_jobs);");
     defer std.testing.allocator.free(empty);
     try std.testing.expectEqualStrings("0|0|0\n", empty);
+}
+
+test "version one Audible state migrates into provider identities without data loss" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const length = try tmp.dir.realPath(std.testing.io, &buffer);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ buffer[0..length], "legacy.db" });
+    defer std.testing.allocator.free(path);
+    var legacy = Database{ .allocator = std.testing.allocator, .io = std.testing.io, .path = try std.testing.allocator.dupe(u8, path) };
+    {
+        defer legacy.deinit();
+        const bootstrap = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL DEFAULT(unixepoch())); BEGIN IMMEDIATE; {s} INSERT INTO schema_migrations(version) VALUES(1); COMMIT;",
+            .{migrations[0]},
+        );
+        defer std.testing.allocator.free(bootstrap);
+        try legacy.execute(bootstrap);
+        try legacy.execute(
+            "BEGIN IMMEDIATE; " ++
+                "INSERT INTO profiles(id,name,marketplace,locale,is_default) VALUES(7,'legacy-reader','audible.ca','ca',1); " ++
+                "INSERT INTO library_items(profile_id,asin,title,authors_json,narrators_json,cover_url,duration_seconds,release_date,metadata_json) VALUES(7,'B012345678','Legacy Book','[\"Writer\"]','[\"Voice\"]','https://example.invalid/cover',321,'2026-01-02','{\"source\":\"legacy\"}'); " ++
+                "INSERT INTO local_files(id,profile_id,asin,kind,path,size_bytes,checksum,completed_at) VALUES(8,7,'B012345678','audio','/tmp/legacy.aaxc',99,'sum',10); " ++
+                "INSERT INTO download_jobs(id,profile_id,asin,kind,destination,status,bytes_downloaded,total_bytes,created_at,updated_at) VALUES('legacy-job',7,'B012345678','audible','/tmp/legacy.aaxc','completed',99,99,1,2); " ++
+                "INSERT INTO playback_positions(profile_id,asin,position_seconds,duration_seconds) VALUES(7,'B012345678',12.5,321); " ++
+                "INSERT INTO bookmarks(id,profile_id,asin,position_seconds,label) VALUES(9,7,'B012345678',10,'chapter'); COMMIT;",
+        );
+    }
+
+    var database = try Database.open(std.testing.allocator, std.testing.io, path);
+    defer database.deinit();
+    try std.testing.expectEqual(@as(u32, 2), try database.migrationVersion());
+    const migrated = try database.run(
+        "SELECT (SELECT count(*) FROM provider_accounts WHERE provider_id='audible' AND account_id='legacy-reader')||'|'||" ++
+            "(SELECT count(*) FROM provider_items WHERE provider_id='audible' AND item_id='B012345678')||'|'||" ++
+            "(SELECT count(*) FROM account_library_items)||'|'||(SELECT count(*) FROM provider_local_files)||'|'||" ++
+            "(SELECT count(*) FROM provider_download_jobs)||'|'||(SELECT count(*) FROM provider_playback_positions)||'|'||(SELECT count(*) FROM provider_bookmarks);",
+    );
+    defer std.testing.allocator.free(migrated);
+    try std.testing.expectEqualStrings("1|1|1|1|1|1|1\n", migrated);
+    const legacy_unchanged = try database.run("SELECT name||'|'||asin||'|'||title FROM profiles JOIN library_items ON profiles.id=library_items.profile_id;");
+    defer std.testing.allocator.free(legacy_unchanged);
+    try std.testing.expectEqualStrings("legacy-reader|B012345678|Legacy Book\n", legacy_unchanged);
+}
+
+test "provider-neutral accounts items jobs files and playback coexist" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var database = try openTestDatabase(&tmp);
+    defer database.deinit();
+    const account: provider_model.AccountIdentity = .{ .provider_id = "cards", .account_id = "family" };
+    try database.putProvider("cards", "Card Library");
+    try database.putAccount(.{ .identity = account, .display_name = "Family Library", .locale = "en-CA" });
+    try database.putProviderItem(account, .{
+        .identity = .{ .provider_id = "cards", .item_id = "card:42" },
+        .title = "A Provider-Neutral Story",
+        .creators_json = "[\"Writer\"]",
+        .duration_seconds = 600,
+    });
+    try database.setSelectedAccount(account);
+    const selected = (try database.getSelectedAccount(std.testing.allocator)).?;
+    defer selected.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("cards", selected.provider_id);
+    try std.testing.expectEqualStrings("family", selected.account_id);
+    try database.putProviderLocalFile(account, "card:42", "A Provider-Neutral Story", "audio", "/tmp/card-42.opus", 100, null);
+    try database.putProviderDownloadJob(.{
+        .id = "job-42",
+        .account = account,
+        .item_id = "card:42",
+        .title = "A Provider-Neutral Story",
+        .kind = "provider",
+        .destination = "/tmp/card-42.opus",
+        .status = "completed",
+        .bytes_downloaded = 100,
+        .total_bytes = 100,
+        .created_at = 1,
+        .updated_at = 2,
+    });
+    try database.putProviderPlaybackPosition(account, "card:42", "A Provider-Neutral Story", 45, 600);
+    const position = (try database.getProviderPlaybackPosition(account, "card:42")).?;
+    try std.testing.expectApproxEqAbs(@as(f64, 45), position.position_seconds, 0.001);
+    const bookmark_id = try database.addProviderBookmark(account, "card:42", "A Provider-Neutral Story", 30, "favorite");
+    const bookmarks = try database.listProviderBookmarks(std.testing.allocator, account, "card:42");
+    defer {
+        for (bookmarks) |bookmark| bookmark.deinit(std.testing.allocator);
+        std.testing.allocator.free(bookmarks);
+    }
+    try std.testing.expectEqual(@as(usize, 1), bookmarks.len);
+    try std.testing.expectEqualStrings("favorite", bookmarks[0].label.?);
+    try database.deleteProviderBookmark(account, bookmark_id);
+    const counts = try database.run("SELECT (SELECT display_name FROM providers WHERE id='cards')||'|'||(SELECT count(*) FROM provider_accounts WHERE provider_id='cards')||'|'||(SELECT count(*) FROM provider_items WHERE provider_id='cards')||'|'||(SELECT count(*) FROM provider_local_files WHERE provider_id='cards')||'|'||(SELECT count(*) FROM provider_download_jobs WHERE provider_id='cards')||'|'||(SELECT count(*) FROM profiles);");
+    defer std.testing.allocator.free(counts);
+    try std.testing.expectEqualStrings("Card Library|1|1|1|1|0\n", counts);
+    const preserved_metadata = try database.run("SELECT creators_json||'|'||duration_seconds FROM provider_items WHERE provider_id='cards' AND item_id='card:42';");
+    defer std.testing.allocator.free(preserved_metadata);
+    try std.testing.expectEqualStrings("[\"Writer\"]|600\n", preserved_metadata);
 }
