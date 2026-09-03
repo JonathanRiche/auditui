@@ -3,7 +3,7 @@ import type { ImageRenderProtocol } from "@opentui/core";
 import { AppController } from "./app/controller";
 import { initialState, reducer } from "./app/state";
 import type { Action, AppState } from "./app/types";
-import { EngineSupervisor } from "./engine/process";
+import { EngineSupervisor, engineExecutable } from "./engine/process";
 import { palette, watchActiveTheme } from "./theme/palette";
 import { AppView } from "./ui/app-view";
 import type { AppViewOptions } from "./ui/app-view";
@@ -144,7 +144,7 @@ async function runSecureEngineCommand(args: string[]): Promise<boolean> {
   // the TTY with echo disabled; they never cross RPC, argv, logs, or app state.
   renderer.suspend();
   try {
-    const executable = process.env.AUDIBLE_ENGINE ?? "audible-zig";
+    const executable = engineExecutable();
     const child = Bun.spawn([executable, ...args], {
       stdin: "inherit",
       stdout: "inherit",

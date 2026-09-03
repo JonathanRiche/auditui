@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { EventEmitter } from "node:events";
 import { EngineClient } from "./client";
 
@@ -105,8 +107,25 @@ export class EngineSupervisor extends EventEmitter {
   }
 }
 
+/**
+ * Resolve the engine executable. Explicit overrides win; a packaged install
+ * ships `auditui-engine` beside `auditui-ui`, so prefer that sibling before
+ * falling back to the development binary name on PATH.
+ */
+export function engineExecutable(
+  env: Record<string, string | undefined> = process.env,
+  execPath: string = process.execPath,
+  exists: (path: string) => boolean = (path) => existsSync(path),
+): string {
+  const override = env.AUDITUI_ENGINE ?? env.AUDIBLE_ENGINE;
+  if (override) return override;
+  const sibling = join(dirname(execPath), "auditui-engine");
+  if (exists(sibling)) return sibling;
+  return "audible-zig";
+}
+
 function defaultSpawn(): ManagedProcess {
-  const executable = process.env.AUDIBLE_ENGINE ?? "audible-zig";
+  const executable = engineExecutable();
   return Bun.spawn([executable, "internal", "rpc"], {
     stdin: "pipe",
     stdout: "pipe",

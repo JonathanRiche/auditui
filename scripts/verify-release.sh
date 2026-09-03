@@ -25,6 +25,8 @@ test -x "$auditui_prefix/bin/auditui-engine"
 "$auditui_prefix/bin/auditui" --help | rg -q 'auditui auth login'
 "$auditui_prefix/bin/auditui" --help | rg -q -- '--provider NAME'
 test -f "$auditui_package/docs/yoto-provider.md"
+auditui_ui_engine=$(AUDITUI_UI=/usr/bin/env "$auditui_prefix/bin/auditui" | rg '^AUDITUI_ENGINE=' || true)
+test "$auditui_ui_engine" = "AUDITUI_ENGINE=$auditui_prefix/bin/auditui-engine"
 auditui_login_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login --profile reader --country-code ca --no-encryption)
 test "$auditui_login_args" = 'quickstart --profile reader --country-code ca --no-encryption'
 auditui_default_login_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login)

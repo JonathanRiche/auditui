@@ -38,7 +38,7 @@ command=${1:-app}
 case "$command" in
   app)
     shift || true
-    exec "$auditui_ui" "$@"
+    AUDITUI_ENGINE=$auditui_engine exec "$auditui_ui" "$@"
     ;;
   auth)
     subcommand=${2:-}
