@@ -48,4 +48,16 @@ describe("cover image selection", () => {
       "https://m.media-amazon.com/images/I/tile.jpg",
     );
   });
+
+  test("accepts Yoto card art and Make Your Own covers", () => {
+    expect(trustedCoverSource("https://card-content.yotoplay.com/yoto/pub/abc123")).toBe(
+      "https://card-content.yotoplay.com/yoto/pub/abc123",
+    );
+    expect(trustedCoverSource("https://cdn.yoto.io/myo-cover/strawberry_yellow.gif")).toBe(
+      "https://cdn.yoto.io/myo-cover/strawberry_yellow.gif",
+    );
+    expect(trustedCoverSource("http://cdn.yoto.io/myo-cover/plain.gif")).toBeNull();
+    expect(trustedCoverSource("https://yoto.io.evil.example/cover.png")).toBeNull();
+    expect(trustedCoverSource("https://notyotoplay.com/cover.png")).toBeNull();
+  });
 });

@@ -27,16 +27,30 @@ export function selectedCoverSource(state: AppState): string | null {
   return trustedCoverSource(state.visibleItems[state.selectedIndex]?.coverUrl);
 }
 
-/** Allows only Audible/Amazon HTTPS artwork in any view. */
+/** HTTPS artwork hosts used by the supported providers. */
+const trustedCoverHosts: ReadonlyArray<{ exact?: string; suffix?: string }> = [
+  // Audible / Amazon
+  { exact: "m.media-amazon.com" },
+  { suffix: ".media-amazon.com" },
+  { suffix: ".ssl-images-amazon.com" },
+  // Yoto: commercial card art and Make Your Own covers
+  { exact: "card-content.yotoplay.com" },
+  { suffix: ".yotoplay.com" },
+  { exact: "cdn.yoto.io" },
+  { suffix: ".yoto.io" },
+];
+
+/** Allows only HTTPS artwork from known provider CDNs in any view. */
 export function trustedCoverSource(value?: string): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
-    const trusted =
-      host === "m.media-amazon.com" ||
-      host.endsWith(".media-amazon.com") ||
-      host.endsWith(".ssl-images-amazon.com");
+    const trusted = trustedCoverHosts.some(
+      (rule) =>
+        (rule.exact !== undefined && host === rule.exact) ||
+        (rule.suffix !== undefined && host.endsWith(rule.suffix)),
+    );
     return url.protocol === "https:" && trusted ? url.href : null;
   } catch {
     return null;
