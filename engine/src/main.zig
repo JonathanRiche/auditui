@@ -440,7 +440,9 @@ fn libraryRefreshCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.
     if (std.mem.eql(u8, provider, "yoto")) {
         const account = optionValue(args, "--account", "") orelse optionValue(args, "--profile", "-P") orelse "default";
         const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
-        return writer.print("Refreshed {d} Yoto titles for account {s}.\n", .{ result.item_count, account });
+        try writer.print("Refreshed {d} Yoto titles for account {s}.\n", .{ result.item_count, account });
+        if (result.group_count == 0) try writer.print("{s}\n", .{engine.yoto.provider.no_groups_hint});
+        return;
     }
     if (!std.mem.eql(u8, provider, "audible")) return error.UnknownProvider;
     const profile_name = try effectiveProfileName(allocator, io, environ, args);
@@ -500,6 +502,7 @@ fn yotoLoginCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.proce
     try engine.yoto.provider.connect(allocator, io, environ, account, client_id, writer);
     const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
     try writer.print("Loaded {d} Yoto titles.\n", .{result.item_count});
+    if (result.group_count == 0) try writer.print("{s}\n", .{engine.yoto.provider.no_groups_hint});
 }
 
 fn profileImport(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, source: []const u8, name: []const u8) !void {

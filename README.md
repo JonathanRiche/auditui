@@ -136,6 +136,11 @@ For a named account, append `--account kids-room` to each Yoto command. The
 client ID is needed only by `yoto:connect`; Auditui stores it for subsequent
 refreshes.
 
+Purchased Yoto cards appear only when they are in a Library group: in the Yoto
+app open *Library*, create a group (for example "Auditui"), add the cards, then
+run `mise run yoto:refresh`. Yoto's public API has no endpoint that lists every
+purchased card directly; Make Your Own cards are always included.
+
 Connect an Audible account in the external browser, then populate the local
 library cache. The default encrypted profile asks for its passphrase in both
 commands:

@@ -100,6 +100,13 @@ groups. The public documentation does not currently provide a general endpoint
 that enumerates every purchased commercial card, so Auditui does not attempt to
 reconstruct that list through undocumented requests.
 
+**To see purchased cards in Auditui**, put them in a Library group: in the Yoto
+app open *Library*, create a group (for example "Auditui"), add every card you
+want available, then run `auditui library refresh --provider yoto`. Auditui
+fetches every card in every group and fills in metadata for group items whose
+card details Yoto did not expand inline. When a refresh finds no groups at all,
+the CLI prints this reminder.
+
 ## Current capability boundary
 
 Supported:

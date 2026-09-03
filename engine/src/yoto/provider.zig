@@ -7,7 +7,12 @@ const api = @import("api.zig");
 
 pub const id = "yoto";
 
-pub const RefreshResult = struct { item_count: usize, token_refreshed: bool };
+pub const RefreshResult = struct { item_count: usize, group_count: usize, token_refreshed: bool };
+
+/// Yoto's public API exposes purchased cards only through Library groups.
+pub const no_groups_hint =
+    "Only Make Your Own cards were found. Yoto's public API lists purchased cards only through Library groups: " ++
+    "in the Yoto app open Library, create a group (for example \"Auditui\"), add the cards you want, then run `library refresh --provider yoto`.";
 pub const Account = struct { id: []const u8, secure_permissions: bool };
 
 fn validAccount(value: []const u8) bool {
@@ -309,7 +314,7 @@ pub fn refreshLibrary(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
     }
     const path = try cachePath(allocator, environ, account);
     defer allocator.free(path);
-    return .{ .item_count = try writeLibraryCache(allocator, io, path, account, &mine, &groups, hydrated.items), .token_refreshed = access.refreshed };
+    return .{ .item_count = try writeLibraryCache(allocator, io, path, account, &mine, &groups, hydrated.items), .group_count = groups.parsed.value.len, .token_refreshed = access.refreshed };
 }
 
 pub fn loadCache(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8) !std.json.Parsed(library.Cache) {
