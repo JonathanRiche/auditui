@@ -15,8 +15,6 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      XDG_CONFIG_HOME: ${{ runner.temp }}/auditui-xdg/config
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4
@@ -24,8 +22,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes mpv ripgrep sqlite3
       - name: Configure headless audio
         run: |
-          mkdir -p "${XDG_CONFIG_HOME}/mpv"
-          printf '%s\n' 'ao=null' > "${XDG_CONFIG_HOME}/mpv/mpv.conf"
+          mkdir -p "${HOME}/.config/mpv"
+          printf '%s\n' 'ao=null' > "${HOME}/.config/mpv/mpv.conf"
       - name: Verify tag matches the application version
         shell: bash
         run: |
