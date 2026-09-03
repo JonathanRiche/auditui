@@ -114,14 +114,16 @@ controller = new AppController(
     dispatch,
     runInteractiveRefresh: (profile) =>
       runSecureEngineCommand(["library", "refresh", "--profile", profile]),
-    runInteractiveConnect: () =>
-      runSecureEngineCommand([
-        "quickstart",
-        "--profile",
-        process.env.AUDITUI_PROFILE ?? "default",
-        "--country-code",
-        process.env.AUDITUI_COUNTRY_CODE ?? "us",
-      ]),
+    runInteractiveConnect: (provider) =>
+      provider === "yoto"
+        ? runSecureEngineCommand(["auth", "login", "--provider", "yoto"])
+        : runSecureEngineCommand([
+            "quickstart",
+            "--profile",
+            process.env.AUDITUI_PROFILE ?? "default",
+            "--country-code",
+            process.env.AUDITUI_COUNTRY_CODE ?? "us",
+          ]),
     quit: shutdown,
   },
   supervisor,

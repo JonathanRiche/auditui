@@ -36,6 +36,9 @@ const listeningState = (item: LibraryItem): string => {
   return `${percent}% listened`;
 };
 
+const providerLabel = (provider?: string): string =>
+  provider?.toLowerCase() === "yoto" ? "YOTO" : provider?.toUpperCase() || "AUDIBLE";
+
 const libraryCoverHeight = (cardWidth: number): number =>
   Math.max(7, Math.min(12, Math.floor((cardWidth - 4) / 2)));
 const libraryCardHeight = (cardWidth: number): number => libraryCoverHeight(cardWidth) + 9;
@@ -528,7 +531,7 @@ export class AppView {
     this.helpModal.height = height;
     this.helpModal.left = Math.max(0, Math.floor((state.width - width) / 2));
     this.helpModal.top = Math.max(0, Math.floor((state.height - height) / 2));
-    this.helpText.content = t`${bold(fg(palette.accent)("Keyboard shortcuts & mouse"))}
+    this.helpText.content = t`${bold(fg(palette.accent)("Keyboard shortcuts & mouse — click/drag timeline"))}
 
 ${bold(fg(palette.foreground)("LIBRARY GRID"))}
 ${bold("h / ←")}      Move left             ${bold("l / →")}      Move right
@@ -548,8 +551,9 @@ ${bold("b")}          Add bookmark           ${bold("x")}          Delete select
 
 ${bold(fg(palette.foreground)("WISHLIST, DOWNLOADS & GLOBAL"))}
 ${bold("a / x")}      Add/remove wishlist    ${bold("c / r")}      Cancel/retry download
+${bold("a / y")}      Connect Audible/Yoto   ${bold("r")}          Refresh library
 ${bold("Settings Enter")} Use profile        ${bold("Settings x")} Remove local profile
-${bold("Esc")}        Back/close             ${bold("r")}          Refresh library
+${bold("Esc")}        Back/close
 ${bold("q")}          Back or quit           ${bold("?")}          Toggle this help
 ${bold(fg(palette.foreground)("MOUSE"))}  Click cards/actions/tabs · wheel to scroll · click/drag timeline
 ${fg(palette.subtle)("Profile removal is local-only and always asks for confirmation.")}
@@ -656,7 +660,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       if (!state.profileName)
         this.addEmpty(
           "Welcome to Auditui",
-          "No Audible profile was detected. Press a to open secure browser sign-in.",
+          "No audiobook account was detected. Press a for Audible or y for Yoto sign-in.",
         );
       else if (!state.profileSecure)
         this.addEmpty(
@@ -850,10 +854,15 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       ),
     );
     card.add(
-      text(this.ctx, `${cardId}-author`, t`${dim(fg(palette.muted)(truncate(author, inner)))}`, {
-        width: "100%",
-        bg: cardBackground,
-      }),
+      text(
+        this.ctx,
+        `${cardId}-author`,
+        t`${bold(fg(palette.accent)(providerLabel(item.provider)))} ${dim(fg(palette.muted)(truncate(author, Math.max(4, inner - providerLabel(item.provider).length - 1))))}`,
+        {
+          width: "100%",
+          bg: cardBackground,
+        },
+      ),
     );
     card.add(
       text(
@@ -871,7 +880,9 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
           t`${fg(palette.muted)(listeningState(item))}`,
           item.downloaded
             ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.success)("✓ Offline")}`
-            : t`${fg(palette.subtle)("  ·  Online only")}`,
+            : item.streamable
+              ? t`${fg(palette.subtle)("  ·  Stream")}`
+              : t`${fg(palette.subtle)("  ·  Online only")}`,
         ),
         { width: "100%", bg: cardBackground },
       ),
@@ -946,7 +957,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       text(
         this.ctx,
         "detail-kicker",
-        t`${fg(palette.accent)(item.downloaded ? "AVAILABLE OFFLINE" : "IN YOUR LIBRARY")}`,
+        t`${fg(palette.accent)(`${providerLabel(item.provider)}  ·  ${item.downloaded ? "AVAILABLE OFFLINE" : item.streamable ? "READY TO STREAM" : "IN YOUR LIBRARY"}`)}`,
         { width: "100%" },
       ),
     );
@@ -1014,7 +1025,11 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       "detail-action",
       item.downloaded
         ? t`${fg(palette.success)("✓ Available offline")}    ${bold(fg(palette.accent)("Enter  Resume / play"))}`
-        : t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`,
+        : item.streamable
+          ? t`${bold(fg(palette.accent)("Enter  Stream / play"))}    ${fg(palette.muted)(`${providerLabel(item.provider)} streaming`)}`
+          : item.downloadable !== false
+            ? t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`
+            : t`${fg(palette.muted)("Unavailable for playback on this account")}`,
       {
         width: "100%",
         onMouseDown: (event) => {
@@ -1186,7 +1201,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
       text(
         this.ctx,
         "settings-onboarding",
-        t`${fg(palette.muted)(state.profileName ? "Select a profile and press Enter to use it." : "Press a from Library to connect an Audible account in your browser.")}`,
+        t`${fg(palette.muted)(state.profileName ? "Select an account and press Enter to use it." : "From Library, press a to connect Audible or y to connect Yoto.")}`,
         { width: "100%", bg: palette.surface },
       ),
     );
@@ -1202,7 +1217,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
     if (!state.profiles.length)
       return this.addEmpty(
         "No profiles found",
-        "Return to Library and press a to begin secure browser sign-in.",
+        "Return to Library and press a for Audible or y for Yoto sign-in.",
       );
     state.profiles.forEach((profile, index) => {
       const selected = index === state.selectedIndex;
@@ -1231,7 +1246,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
         text(
           this.ctx,
           `profile-${profile.name}-copy`,
-          t`${selected ? fg(palette.accent)("▶ ") : "  "}${bold(profile.name)}  ${fg(profile.secure ? palette.success : palette.danger)(profile.secure ? "secure" : "unsafe permissions")}`,
+          t`${selected ? fg(palette.accent)("▶ ") : "  "}${bold(profile.account ?? profile.name)}  ${fg(palette.accent)(providerLabel(profile.provider))}  ${fg(profile.secure ? palette.success : palette.danger)(profile.secure ? "secure" : "unsafe permissions")}`,
           { width: "100%", bg: selected ? palette.surfaceRaised : palette.surface },
         ),
       );

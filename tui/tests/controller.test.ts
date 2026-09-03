@@ -656,3 +656,78 @@ test("profile selection persists and safe local removal requires confirmation", 
   });
   expect(state.message).toContain("Audible account was not changed");
 });
+
+test("streams Yoto items without routing them through Audible downloads", async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const client = {
+    async request(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === "profile.list") return { items: [] };
+      if (method === "library.list") return { items: [] };
+      if (method === "downloads.list") return { jobs: [] };
+      if (method === "player.status") return {};
+      return {};
+    },
+  } as EngineClient;
+  const emitter = new EventEmitter();
+  const supervisor = {
+    on: emitter.on.bind(emitter),
+    start: () => emitter.emit("ready", client),
+    stop: async () => {},
+  } as unknown as EngineSupervisor;
+  let state = initialState();
+  let connectedProvider = "";
+  const controller = new AppController(
+    {
+      getState: () => state,
+      dispatch: (action) => {
+        state = reducer(state, action);
+      },
+      async runInteractiveConnect(provider) {
+        connectedProvider = provider;
+        return false;
+      },
+      quit() {},
+    },
+    supervisor,
+  );
+  controller.start();
+  await Bun.sleep(0);
+  state = reducer(state, {
+    type: "library.loaded",
+    items: [
+      {
+        id: "yoto-1",
+        title: "Bedtime Story",
+        authors: [],
+        narrators: [],
+        durationSeconds: 600,
+        positionSeconds: 0,
+        downloaded: false,
+        provider: "yoto",
+        account: "kids-room",
+        streamable: true,
+        downloadable: false,
+      },
+    ],
+  });
+  controller.activateItem("yoto-1");
+  await Bun.sleep(0);
+  expect(calls).toContainEqual({
+    method: "player.command",
+    params: {
+      command: "play",
+      itemId: "yoto-1",
+      title: "Bedtime Story",
+      provider: "yoto",
+      account: "kids-room",
+    },
+  });
+  expect(calls.some((call) => call.method === "downloads.start")).toBe(false);
+
+  controller.handleKey(key("d"));
+  expect(state.message).toContain("stream-only");
+  controller.beginProviderOnboarding("yoto");
+  await Bun.sleep(0);
+  expect(connectedProvider).toBe("yoto");
+});

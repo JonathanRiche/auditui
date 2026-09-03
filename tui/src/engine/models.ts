@@ -23,6 +23,7 @@ export function normalizeLibrary(value: unknown): LibraryItem[] {
       number(item.progress_seconds, (durationSeconds * number(item.percentComplete)) / 100),
     );
     const asin = text(item.asin);
+    const provider = text(item.provider, "audible").toLowerCase();
     return {
       id: text(item.id, asin || `book-${index}`),
       ...(asin ? { asin } : {}),
@@ -42,6 +43,11 @@ export function normalizeLibrary(value: unknown): LibraryItem[] {
         ? { releaseDate: text(item.releaseDate, text(item.release_date)) }
         : {}),
       downloaded: item.downloaded === true,
+      provider,
+      ...(text(item.account) ? { account: text(item.account) } : {}),
+      streamable: item.streamable === true,
+      downloadable:
+        typeof item.downloadable === "boolean" ? item.downloadable : provider === "audible",
     };
   });
 }

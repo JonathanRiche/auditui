@@ -3,6 +3,8 @@ export type Screen = "library" | "wishlist" | "downloads" | "now-playing" | "set
 export interface ProfileInfo {
   name: string;
   secure: boolean;
+  provider?: string;
+  account?: string;
 }
 
 export type Confirmation =
@@ -22,6 +24,10 @@ export interface LibraryItem {
   description?: string;
   releaseDate?: string;
   downloaded: boolean;
+  provider?: string;
+  account?: string;
+  streamable?: boolean;
+  downloadable?: boolean;
   downloadState?: "queued" | "active" | "completed" | "failed";
 }
 

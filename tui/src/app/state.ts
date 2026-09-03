@@ -54,8 +54,13 @@ export function initialState(width = 100, height = 30): AppState {
 function matches(item: LibraryItem, query: string): boolean {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return true;
-  return [item.title, ...item.authors, ...item.narrators].some((value) =>
+  const metadata = [item.title, ...item.authors, ...item.narrators].some((value) =>
     value.toLocaleLowerCase().includes(needle),
+  );
+  return (
+    metadata ||
+    item.provider?.toLocaleLowerCase() === needle ||
+    item.account?.toLocaleLowerCase().includes(needle) === true
   );
 }
 

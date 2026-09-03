@@ -182,6 +182,42 @@ describe("retained app view", () => {
     expect(frame).not.toContain("<p>");
   });
 
+  test("labels Yoto content as streamable without Audible download actions", async () => {
+    const setup = await createTestRenderer({ width: 90, height: 36 });
+    renderers.push(setup.renderer);
+    const view = new AppView(setup.renderer, {
+      imageProtocol: "blocks",
+      onResize() {},
+      onSeek() {},
+      onTogglePlayback() {},
+      onNavigate() {},
+      onOpenSearch() {},
+    });
+    setup.renderer.root.add(view.root);
+    const yoto = {
+      ...item,
+      id: "yoto-1",
+      title: "Bedtime Story",
+      downloaded: false,
+      provider: "yoto",
+      account: "kids-room",
+      streamable: true,
+      downloadable: false,
+    };
+    let state = reducer(initialState(90, 36), { type: "library.loaded", items: [yoto] });
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("YOTO");
+
+    state = reducer(state, { type: "navigate", screen: "detail" });
+    view.render(state);
+    await setup.renderOnce();
+    const detail = setup.captureCharFrame();
+    expect(detail).toContain("READY TO STREAM");
+    expect(detail).toContain("Stream / play");
+    expect(detail).not.toContain("d  Download");
+  });
+
   test("clicks play/pause and clicks or drags the timeline to seek", async () => {
     const setup = await createTestRenderer({ width: 120, height: 30 });
     renderers.push(setup.renderer);

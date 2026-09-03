@@ -7,6 +7,26 @@ import {
 } from "../src/engine/models";
 
 describe("engine model compatibility", () => {
+  test("normalizes provider accounts and media capabilities", () => {
+    const [item] = normalizeLibrary({
+      items: [
+        {
+          id: "yoto-1",
+          title: "Bedtime Story",
+          provider: "YOTO",
+          account: "kids-room",
+          streamable: true,
+          downloadable: false,
+        },
+      ],
+    });
+    expect(item).toMatchObject({
+      provider: "yoto",
+      account: "kids-room",
+      streamable: true,
+      downloadable: false,
+    });
+  });
   test("normalizes Zig cache field names", () => {
     const [item] = normalizeLibrary({
       items: [

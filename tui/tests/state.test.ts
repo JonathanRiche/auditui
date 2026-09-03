@@ -33,6 +33,22 @@ describe("application reducer", () => {
     expect(state.selectedIndex).toBe(0);
   });
 
+  test("search filters by provider and account as well as book metadata", () => {
+    const yoto = {
+      ...books[0]!,
+      id: "yoto-1",
+      provider: "yoto",
+      account: "kids-room",
+      streamable: true,
+      downloadable: false,
+    };
+    let state = reducer(initialState(), { type: "library.loaded", items: [...books, yoto] });
+    state = reducer(state, { type: "search.change", query: "yoto" });
+    expect(state.visibleItems.map((item) => item.id)).toEqual(["yoto-1"]);
+    state = reducer(state, { type: "search.change", query: "kids-room" });
+    expect(state.visibleItems.map((item) => item.id)).toEqual(["yoto-1"]);
+  });
+
   test("merges asynchronous player and download events", () => {
     let state = initialState();
     state = reducer(state, {

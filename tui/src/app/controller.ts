@@ -16,7 +16,7 @@ export interface AppHost {
   getState(): AppState;
   dispatch(action: import("./types").Action): void;
   runInteractiveRefresh?(profile: string): Promise<boolean>;
-  runInteractiveConnect?(): Promise<boolean>;
+  runInteractiveConnect?(provider: string): Promise<boolean>;
   quit(): void | Promise<void>;
 }
 
@@ -145,11 +145,18 @@ export class AppController {
     const state = this.host.getState();
     const item = state.visibleItems.find((candidate) => candidate.id === itemId);
     if (!item) return;
-    if (!item.localPath) {
+    if (item.localPath || item.streamable) {
+      void this.playItem(item);
+      return;
+    }
+    if (item.downloadable !== false) {
       void this.downloadItem(item);
       return;
     }
-    void this.playItem(item);
+    this.host.dispatch({
+      type: "message",
+      message: `${item.title} is not currently available for playback or download`,
+    });
   }
 
   selectDownload(jobId: string): void {
@@ -234,7 +241,11 @@ export class AppController {
   }
 
   beginOnboarding(): void {
-    void this.startOnboarding();
+    void this.startOnboarding("audible");
+  }
+
+  beginProviderOnboarding(provider: "audible" | "yoto"): void {
+    void this.startOnboarding(provider);
   }
 
   backOrQuit(): void {
@@ -373,7 +384,9 @@ export class AppController {
     else if ((name === "x" || name === "delete") && state.screen === "settings")
       this.requestProfileRemoval();
     else if (name === "a" && state.screen === "library" && !state.profileName)
-      void this.startOnboarding();
+      void this.startOnboarding("audible");
+    else if (name === "y" && state.screen === "library" && !state.profileName)
+      void this.startOnboarding("yoto");
     else if (name === "b" && state.screen === "now-playing")
       void this.playerCommand("bookmark-add", {
         label: `Bookmark at ${Math.floor(state.player.positionSeconds)}s`,
@@ -464,7 +477,7 @@ export class AppController {
     else if (state.screen === "detail") {
       const item = state.visibleItems[state.selectedIndex];
       if (!item) return;
-      if (!item.localPath) {
+      if (!item.localPath && !item.streamable) {
         this.host.dispatch({ type: "message", message: "Download this title before playing it" });
         return;
       }
@@ -526,6 +539,12 @@ export class AppController {
             {
               name: (value as { name: string }).name,
               secure: (value as { securePermissions?: unknown }).securePermissions !== false,
+              ...(typeof (value as { provider?: unknown }).provider === "string"
+                ? { provider: (value as { provider: string }).provider }
+                : {}),
+              ...(typeof (value as { account?: unknown }).account === "string"
+                ? { account: (value as { account: string }).account }
+                : {}),
             },
           ];
         }),
@@ -690,6 +709,13 @@ export class AppController {
 
   private async downloadItem(item: LibraryItem): Promise<void> {
     if (!this.client) return;
+    if (item.downloadable === false) {
+      this.host.dispatch({
+        type: "message",
+        message: `${item.title} is stream-only and does not support offline downloads`,
+      });
+      return;
+    }
     if (item.downloaded && item.localPath) {
       this.host.dispatch({ type: "message", message: `${item.title} is already downloaded` });
       return;
@@ -707,11 +733,13 @@ export class AppController {
   }
 
   private async playItem(item: LibraryItem): Promise<void> {
-    if (!item.localPath) return;
+    if (!item.localPath && !item.streamable) return;
     await this.playerCommand("play", {
-      path: item.localPath,
+      ...(item.localPath ? { path: item.localPath } : {}),
       itemId: item.id,
       title: item.title,
+      ...(item.provider ? { provider: item.provider } : {}),
+      ...(item.account ? { account: item.account } : {}),
       ...(this.host.getState().profileName ? { profile: this.host.getState().profileName } : {}),
     });
   }
@@ -810,7 +838,7 @@ export class AppController {
     }
   }
 
-  private async startOnboarding(): Promise<void> {
+  private async startOnboarding(provider: "audible" | "yoto"): Promise<void> {
     if (!this.host.runInteractiveConnect) {
       this.host.dispatch({
         type: "message",
@@ -820,16 +848,22 @@ export class AppController {
     }
     this.host.dispatch({
       type: "message",
-      message: "Secure account setup active in this terminal",
+      message: `Secure ${provider === "yoto" ? "Yoto" : "Audible"} account setup active in this terminal`,
     });
-    const connected = await this.host.runInteractiveConnect();
+    const connected = await this.host.runInteractiveConnect(provider);
     if (!connected) {
-      this.host.dispatch({ type: "message", message: "Account setup was cancelled or failed" });
+      this.host.dispatch({
+        type: "message",
+        message: `${provider === "yoto" ? "Yoto" : "Audible"} account setup was cancelled or failed`,
+      });
       return;
     }
     await this.refresh();
     if (this.host.getState().profileName) await this.refreshAccountLibrary(false);
-    this.host.dispatch({ type: "message", message: "Account connected securely" });
+    this.host.dispatch({
+      type: "message",
+      message: `${provider === "yoto" ? "Yoto" : "Audible"} account connected securely`,
+    });
   }
 
   private async completeOnboarding(): Promise<void> {
