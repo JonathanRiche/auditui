@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { KeyEvent } from "@opentui/core";
-import { AppController } from "../src/app/controller";
+import { AppController, unplayableMessage } from "../src/app/controller";
 import { initialState, reducer } from "../src/app/state";
 import type { Action } from "../src/app/types";
 import { EngineSupervisor } from "../src/engine/process";
@@ -796,4 +796,16 @@ test("streams Yoto items without routing them through Audible downloads", async 
   controller.beginProviderOnboarding("yoto");
   await Bun.sleep(0);
   expect(connectedProvider).toBe("yoto");
+});
+
+test("unplayable messages explain the provider-specific reason", () => {
+  expect(unplayableMessage({ title: "Dune", provider: "audible" })).toBe(
+    "Download this title before playing it",
+  );
+  expect(unplayableMessage({ title: "Dune", provider: "audible", downloadable: false })).toBe(
+    "Dune is not currently available for playback or download",
+  );
+  expect(
+    unplayableMessage({ title: "Pup Pack: Skye", provider: "yoto", downloadable: false }),
+  ).toContain("only Make Your Own cards can be streamed");
 });

@@ -12,6 +12,19 @@ import type { AppState, DownloadJob, LibraryItem, PlayerState, Screen } from "./
 import { libraryColumnCount } from "./state";
 import { commandEntries, type CommandId } from "./commands";
 
+/** Why a library item cannot be played right now, phrased for its provider. */
+export function unplayableMessage(item: {
+  title: string;
+  provider?: string;
+  downloadable?: boolean;
+}): string {
+  if (item.provider === "yoto") {
+    return "Yoto's public API does not provide playable audio for purchased cards; only Make Your Own cards can be streamed";
+  }
+  if (item.downloadable !== false) return "Download this title before playing it";
+  return `${item.title} is not currently available for playback or download`;
+}
+
 export interface AppHost {
   getState(): AppState;
   dispatch(action: import("./types").Action): void;
@@ -153,10 +166,7 @@ export class AppController {
       void this.downloadItem(item);
       return;
     }
-    this.host.dispatch({
-      type: "message",
-      message: `${item.title} is not currently available for playback or download`,
-    });
+    this.host.dispatch({ type: "message", message: unplayableMessage(item) });
   }
 
   selectDownload(jobId: string): void {
@@ -477,7 +487,7 @@ export class AppController {
       const item = state.visibleItems[state.selectedIndex];
       if (!item) return;
       if (!item.localPath && !item.streamable) {
-        this.host.dispatch({ type: "message", message: "Download this title before playing it" });
+        this.host.dispatch({ type: "message", message: unplayableMessage(item) });
         return;
       }
       void this.playItem(item);
