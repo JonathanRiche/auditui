@@ -11,6 +11,16 @@ metadata caching, persistent playback state, and supervised mpv playback.
 Audible's private API can change without notice; account tests remain opt-in and
 are never run in CI.
 
+## Screenshots
+
+### Library
+
+![Auditui library with tiled cover artwork and listening progress](docs/images/library.png)
+
+### Title details and player
+
+![Auditui title details with full-resolution cover artwork and persistent player](docs/images/title-detail.png)
+
 ## Install
 
 Install the latest Linux x86_64 release directly from GitHub:
