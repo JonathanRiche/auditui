@@ -70,8 +70,10 @@ describe("engine model compatibility", () => {
   test("accepts both downloads result envelope names", () => {
     expect(normalizeDownloads({ items: [] })).toEqual([]);
     expect(
-      normalizeDownloads({ jobs: [{ id: "j1", state: "active", received: 1, total: 2 }] })[0],
-    ).toMatchObject({ jobId: "j1", state: "active" });
+      normalizeDownloads({
+        jobs: [{ id: "j1", state: "completed", received: 2, total: 2, path: "/books/dune.aaxc" }],
+      })[0],
+    ).toMatchObject({ jobId: "j1", state: "completed", localPath: "/books/dune.aaxc" });
   });
 
   test("keeps downloaded library items visible after completed job files are pruned", () => {

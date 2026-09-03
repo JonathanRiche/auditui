@@ -51,6 +51,60 @@ describe("retained app view", () => {
     expect(view.root.findDescendantById("player-dock")).toBeDefined();
   });
 
+  test("shows live download progress on library cards and detail without a restart", async () => {
+    const setup = await createTestRenderer({ width: 120, height: 36 });
+    renderers.push(setup.renderer);
+    const view = new AppView(setup.renderer, {
+      imageProtocol: "blocks",
+      onResize() {},
+      onSeek() {},
+      onTogglePlayback() {},
+      onNavigate() {},
+      onOpenSearch() {},
+    });
+    setup.renderer.root.add(view.root);
+    let state = reducer(initialState(120, 36), {
+      type: "library.loaded",
+      items: [{ ...item, positionSeconds: 0, downloaded: false }],
+    });
+    view.render(state);
+    await setup.renderOnce();
+
+    state = reducer(state, {
+      type: "download.progress",
+      job: {
+        jobId: "dune",
+        itemId: "dune",
+        title: "Dune",
+        state: "active",
+        received: 25,
+        total: 100,
+      },
+    });
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Downloading 25%");
+
+    state = reducer(state, { type: "navigate", screen: "detail" });
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Monitor or cancel");
+
+    state = reducer(state, {
+      type: "download.progress",
+      job: {
+        jobId: "dune",
+        state: "completed",
+        received: 100,
+        total: 100,
+        localPath: "/books/dune.aaxc",
+      },
+    });
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Available offline");
+  });
+
   test("tiles growing libraries into responsive cover-card rows", async () => {
     const setup = await createTestRenderer({ width: 190, height: 50 });
     renderers.push(setup.renderer);

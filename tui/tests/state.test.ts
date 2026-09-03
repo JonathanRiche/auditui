@@ -71,6 +71,32 @@ describe("application reducer", () => {
     expect(state.downloads[0]).toMatchObject({ received: 75, total: 100 });
   });
 
+  test("projects live download state and completed paths into library items", () => {
+    let state = reducer(initialState(), { type: "library.loaded", items: [books[0]!] });
+    state = reducer(state, {
+      type: "download.progress",
+      job: {
+        jobId: "1",
+        itemId: "1",
+        title: "Dune",
+        state: "active",
+        received: 25,
+        total: 100,
+      },
+    });
+    expect(state.visibleItems[0]).toMatchObject({ downloadState: "active", downloaded: false });
+
+    state = reducer(state, {
+      type: "download.progress",
+      job: { jobId: "1", state: "completed", received: 100, localPath: "/books/dune.aaxc" },
+    });
+    expect(state.visibleItems[0]).toMatchObject({
+      downloadState: "completed",
+      downloaded: true,
+      localPath: "/books/dune.aaxc",
+    });
+  });
+
   test("tracks previous screen for back navigation", () => {
     const state = reducer(initialState(), { type: "navigate", screen: "detail" });
     expect(state).toMatchObject({ screen: "detail", previousScreen: "library" });

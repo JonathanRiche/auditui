@@ -1,4 +1,4 @@
-import type { Action, AppState, LibraryItem, PlayerState } from "./types";
+import type { Action, AppState, DownloadJob, LibraryItem, PlayerState } from "./types";
 
 export const libraryColumnCount = (width: number): number =>
   Math.max(1, Math.min(5, Math.floor((width - 4) / 34)));
@@ -80,6 +80,37 @@ function filtered(library: LibraryItem[], query: string): LibraryItem[] {
   return [...continuing, ...remaining];
 }
 
+function applyDownloadState(items: LibraryItem[], jobs: DownloadJob[]): LibraryItem[] {
+  const byItem = new Map<string, DownloadJob>();
+  for (const job of jobs) byItem.set(job.itemId, job);
+  return items.map((item) => {
+    const job = byItem.get(item.id) ?? (item.asin ? byItem.get(item.asin) : undefined);
+    if (!job) return item;
+    return {
+      ...item,
+      downloadState: job.state,
+      downloaded: item.downloaded || job.state === "completed",
+      ...(job.state === "completed" && job.localPath ? { localPath: job.localPath } : {}),
+    };
+  });
+}
+
+function withDownloads(state: AppState, downloads: DownloadJob[]): AppState {
+  const selectedId = state.visibleItems[state.selectedIndex]?.id;
+  const library = applyDownloadState(state.library, downloads);
+  const visibleItems = filtered(library, state.query);
+  const retainedIndex = selectedId
+    ? visibleItems.findIndex((item) => item.id === selectedId)
+    : state.selectedIndex;
+  return {
+    ...state,
+    downloads,
+    library,
+    visibleItems,
+    selectedIndex: Math.max(0, Math.min(retainedIndex, Math.max(0, visibleItems.length - 1))),
+  };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "engine.status":
@@ -111,7 +142,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "library.failed":
       return { ...state, loading: false, message: action.message };
     case "download.list":
-      return { ...state, downloads: action.jobs };
+      return withDownloads(state, action.jobs);
     case "wishlist.loaded":
       return {
         ...state,
@@ -141,11 +172,11 @@ export function reducer(state: AppState, action: Action): AppState {
           total: null,
           ...action.job,
         };
-        return { ...state, downloads: [...state.downloads, job] };
+        return withDownloads(state, [...state.downloads, job]);
       }
       const downloads = state.downloads.slice();
       downloads[index] = { ...downloads[index]!, ...action.job };
-      return { ...state, downloads };
+      return withDownloads(state, downloads);
     }
     case "player.status":
       return { ...state, player: { ...state.player, ...action.player } };

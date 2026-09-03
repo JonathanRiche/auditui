@@ -39,6 +39,12 @@ const listeningState = (item: LibraryItem): string => {
 const providerLabel = (provider?: string): string =>
   provider?.toLowerCase() === "yoto" ? "YOTO" : provider?.toUpperCase() || "AUDIBLE";
 
+const itemDownload = (state: AppState, item: LibraryItem): DownloadJob | undefined =>
+  state.downloads.find((job) => job.itemId === item.id || job.itemId === item.asin);
+
+const downloadPercent = (job: DownloadJob): number =>
+  job.total ? Math.max(0, Math.min(100, Math.round((job.received / job.total) * 100))) : 0;
+
 const libraryCoverHeight = (cardWidth: number): number =>
   Math.max(7, Math.min(12, Math.floor((cardWidth - 4) / 2)));
 const libraryCardHeight = (cardWidth: number): number => libraryCoverHeight(cardWidth) + 9;
@@ -574,7 +580,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
                   state.player,
                   state.library.find((item) => item.id === state.player.itemId)?.coverUrl,
                 ]
-              : state.visibleItems;
+              : [state.visibleItems, state.downloads];
     return JSON.stringify([
       state.screen,
       state.selectedIndex,
@@ -810,6 +816,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
     };
     const inner = Math.max(12, width - 4);
     const author = item.authors.join(", ") || "Unknown author";
+    const transfer = itemDownload(state, item);
     const artwork = new BoxRenderable(this.ctx, {
       id: `${cardId}-artwork`,
       width: "100%",
@@ -878,11 +885,17 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
         `${cardId}-state`,
         concat(
           t`${fg(palette.muted)(listeningState(item))}`,
-          item.downloaded
-            ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.success)("✓ Offline")}`
-            : item.streamable
-              ? t`${fg(palette.subtle)("  ·  Stream")}`
-              : t`${fg(palette.subtle)("  ·  Online only")}`,
+          transfer?.state === "active"
+            ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.accent)(`Downloading ${downloadPercent(transfer)}%`)}`
+            : transfer?.state === "queued"
+              ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.accent)("Queued")}`
+              : transfer?.state === "failed"
+                ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.danger)("Download failed")}`
+                : item.downloaded || transfer?.state === "completed"
+                  ? t`${fg(palette.subtle)("  ·  ")}${fg(palette.success)("✓ Offline")}`
+                  : item.streamable
+                    ? t`${fg(palette.subtle)("  ·  Stream")}`
+                    : t`${fg(palette.subtle)("  ·  Online only")}`,
         ),
         { width: "100%", bg: cardBackground },
       ),
@@ -953,6 +966,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       shouldFill: true,
     });
     const percentage = listeningPercent(item);
+    const transfer = itemDownload(state, item);
     metadata.add(
       text(
         this.ctx,
@@ -1020,23 +1034,51 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
         { width: "100%" },
       ),
     );
+    if (transfer?.state === "queued" || transfer?.state === "active") {
+      const percentage = downloadPercent(transfer);
+      metadata.add(
+        text(
+          this.ctx,
+          "detail-download-progress",
+          concat(
+            progress(
+              transfer.received,
+              transfer.total ?? 0,
+              Math.max(12, Math.min(32, state.width - coverWidth - 18)),
+            ),
+            t`  ${bold(fg(palette.accent)(transfer.state === "queued" ? "Queued" : `Downloading ${percentage}%`))}`,
+          ),
+          { width: "100%" },
+        ),
+      );
+    }
     const detailAction = text(
       this.ctx,
       "detail-action",
-      item.downloaded
-        ? t`${fg(palette.success)("✓ Available offline")}    ${bold(fg(palette.accent)("Enter  Resume / play"))}`
-        : item.streamable
-          ? t`${bold(fg(palette.accent)("Enter  Stream / play"))}    ${fg(palette.muted)(`${providerLabel(item.provider)} streaming`)}`
-          : item.downloadable !== false
-            ? t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`
-            : t`${fg(palette.muted)("Unavailable for playback on this account")}`,
+      transfer?.state === "queued" || transfer?.state === "active"
+        ? t`${bold(fg(palette.accent)(transfer.state === "queued" ? "Queued for download" : `Downloading ${downloadPercent(transfer)}%`))}    ${fg(palette.muted)("3 / click  Monitor or cancel")}`
+        : transfer?.state === "failed"
+          ? t`${bold(fg(palette.danger)("Download failed"))}    ${fg(palette.muted)("Open Downloads to retry")}`
+          : item.downloaded || transfer?.state === "completed"
+            ? t`${fg(palette.success)("✓ Available offline")}    ${bold(fg(palette.accent)("Enter  Resume / play"))}`
+            : item.streamable
+              ? t`${bold(fg(palette.accent)("Enter  Stream / play"))}    ${fg(palette.muted)(`${providerLabel(item.provider)} streaming`)}`
+              : item.downloadable !== false
+                ? t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`
+                : t`${fg(palette.muted)("Unavailable for playback on this account")}`,
       {
         width: "100%",
         onMouseDown: (event) => {
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
-          this.options.onActivateItem?.(item.id);
+          if (
+            transfer?.state === "queued" ||
+            transfer?.state === "active" ||
+            transfer?.state === "failed"
+          )
+            this.options.onNavigate("downloads");
+          else this.options.onActivateItem?.(item.id);
         },
       },
     );

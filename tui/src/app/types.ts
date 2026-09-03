@@ -28,7 +28,7 @@ export interface LibraryItem {
   account?: string;
   streamable?: boolean;
   downloadable?: boolean;
-  downloadState?: "queued" | "active" | "completed" | "failed";
+  downloadState?: "queued" | "active" | "completed" | "failed" | "cancelled";
 }
 
 export interface DownloadJob {
@@ -38,6 +38,7 @@ export interface DownloadJob {
   state: "queued" | "active" | "completed" | "failed" | "cancelled";
   received: number;
   total: number | null;
+  localPath?: string;
   error?: string;
   provider?: string;
   account?: string;

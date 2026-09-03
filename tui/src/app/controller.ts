@@ -746,15 +746,60 @@ export class AppController {
       this.host.dispatch({ type: "message", message: `${item.title} is already downloaded` });
       return;
     }
+    const existing = this.host
+      .getState()
+      .downloads.find(
+        (job) =>
+          (job.itemId === item.id || job.itemId === item.asin) &&
+          (job.state === "queued" || job.state === "active"),
+      );
+    if (existing) {
+      this.host.dispatch({
+        type: "message",
+        message: `${item.title} is already downloading — open Downloads to monitor or cancel`,
+      });
+      return;
+    }
+    const optimisticJob: DownloadJob = {
+      jobId: item.id,
+      itemId: item.id,
+      title: item.title,
+      state: "queued",
+      received: 0,
+      total: null,
+      ...(item.provider ? { provider: item.provider } : {}),
+      ...(item.account ? { account: item.account } : {}),
+    };
+    this.host.dispatch({ type: "download.progress", job: optimisticJob });
+    this.host.dispatch({
+      type: "message",
+      message: `Starting ${item.title} — progress is shown here and in Downloads`,
+    });
     try {
-      await this.client.request("downloads.start", {
+      const result = await this.client.request<unknown>("downloads.start", {
         asin: item.asin ?? item.id,
         itemId: item.id,
         ...this.accountParams(item),
       });
-      this.host.dispatch({ type: "message", message: `Queued ${item.title}` });
+      if (
+        result &&
+        typeof result === "object" &&
+        (typeof (result as { jobId?: unknown }).jobId === "string" ||
+          typeof (result as { id?: unknown }).id === "string")
+      ) {
+        const returned = normalizeDownloads({ jobs: [result] })[0];
+        if (returned) this.host.dispatch({ type: "download.progress", job: returned });
+      }
+      this.host.dispatch({
+        type: "message",
+        message: `Downloading ${item.title} — open Downloads to monitor or cancel`,
+      });
       await this.loadDownloads();
     } catch (error) {
+      this.host.dispatch({
+        type: "download.progress",
+        job: { jobId: optimisticJob.jobId, state: "failed", error: friendlyError(error) },
+      });
       this.host.dispatch({ type: "message", message: friendlyError(error) });
     }
   }
@@ -980,14 +1025,22 @@ export class AppController {
 
   private onEngineEvent(event: string, data: unknown): void {
     if (event === "download.progress" && data && typeof data === "object") {
+      const raw = data as Record<string, unknown>;
       this.host.dispatch({
         type: "download.progress",
-        job: data as Partial<DownloadJob> & Pick<DownloadJob, "jobId">,
+        job: {
+          ...(raw as Partial<DownloadJob> & Pick<DownloadJob, "jobId">),
+          ...(typeof raw.path === "string" ? { localPath: raw.path } : {}),
+        },
       });
     } else if (event === "download.state" && data && typeof data === "object") {
+      const raw = data as Record<string, unknown>;
       this.host.dispatch({
         type: "download.progress",
-        job: data as Partial<DownloadJob> & Pick<DownloadJob, "jobId">,
+        job: {
+          ...(raw as Partial<DownloadJob> & Pick<DownloadJob, "jobId">),
+          ...(typeof raw.path === "string" ? { localPath: raw.path } : {}),
+        },
       });
     } else if (event.startsWith("player.") && data && typeof data === "object") {
       this.host.dispatch({ type: "player.status", player: normalizePlayer(data) });

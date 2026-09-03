@@ -219,6 +219,12 @@ test("emits only canonical protocol parameters for media actions", async () => {
     ],
   });
   controller.handleKey(key("d"));
+  expect(state.downloads[0]).toMatchObject({
+    jobId: "1",
+    itemId: "1",
+    title: "Dune",
+    state: "queued",
+  });
   controller.handleKey(key("return"));
   controller.handleKey(key("return"));
   controller.handleKey(key("h"));

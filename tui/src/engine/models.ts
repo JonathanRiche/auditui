@@ -73,6 +73,9 @@ export function normalizeDownloads(value: unknown): DownloadJob[] {
         : "failed") as DownloadJob["state"],
       received: number(job.received),
       total: typeof job.total === "number" ? job.total : null,
+      ...(text(job.localPath, text(job.path))
+        ? { localPath: text(job.localPath, text(job.path)) }
+        : {}),
       ...(text(job.error) ? { error: text(job.error) } : {}),
       ...(text(job.provider) ? { provider: text(job.provider).toLowerCase() } : {}),
       ...(text(job.account) ? { account: text(job.account) } : {}),
