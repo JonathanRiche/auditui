@@ -15,7 +15,7 @@ try {
       access_token: "synthetic-access-token",
       refresh_token: "synthetic-refresh-token",
       token_type: "Bearer",
-      scope: "user:content:view family:library:view offline_access profile",
+      scope: "user:content:view family:library:view offline_access",
       expires_at: 4_102_444_800,
     }),
   );

@@ -113,9 +113,19 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
     const request_line = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidCallback;
     const clean_line = std.mem.trimEnd(u8, request_line, "\r");
     const callback = auth.parseLoopbackRequest(allocator, clean_line, &pending.state) catch |err| {
+        const guidance = switch (err) {
+            error.InvalidScope => "Yoto rejected a requested scope. In the developer dashboard, enable family:library:view and user:content:view, save the application, then retry.",
+            error.AccessDenied => "Yoto authorization was cancelled or declined. Retry and approve the unverified-app consent screen.",
+            error.UnauthorizedClient => "Yoto rejected this client. Confirm it is a Public Client and its callback is exactly http://127.0.0.1:8787/callback.",
+            error.StateMismatch => "The callback did not belong to this login attempt. Close older Yoto login tabs and retry using only the newly opened tab.",
+            error.AuthorizationTemporarilyUnavailable, error.AuthorizationServerError => "Yoto's authorization service is temporarily unavailable. Retry shortly.",
+            else => "Yoto rejected the authorization request. Verify the Public Client, callback URL, and read-only scopes, then retry.",
+        };
+        writer.print("{s}\n", .{guidance}) catch {};
+        writer.flush() catch {};
         var write_buffer: [512]u8 = undefined;
         var response: std.Io.net.Stream.Writer = .init(stream, io, &write_buffer);
-        response.interface.writeAll("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: 25\r\n\r\nAuthorization was rejected") catch {};
+        response.interface.print("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: {d}\r\n\r\n{s}", .{ guidance.len, guidance }) catch {};
         response.interface.flush() catch {};
         return err;
     };

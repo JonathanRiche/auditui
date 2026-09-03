@@ -12,7 +12,7 @@ pub const Config = struct {
     /// Public-client identifier issued at https://dashboard.yoto.dev/.
     client_id: []const u8,
     redirect_uri: []const u8 = recommended_loopback_redirect,
-    scopes: []const u8 = "user:content:view family:library:view offline_access profile",
+    scopes: []const u8 = "user:content:view family:library:view offline_access",
 
     pub fn validate(self: Config) !void {
         if (self.client_id.len == 0) return error.MissingClientId;
@@ -118,7 +118,8 @@ pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const 
     errdefer if (code) |value| allocator.free(value);
     var state_valid = false;
     var state_seen = false;
-    var error_seen = false;
+    var authorization_error: ?[]u8 = null;
+    errdefer if (authorization_error) |value| allocator.free(value);
     var fields = std.mem.splitScalar(u8, query, '&');
     while (fields.next()) |field| {
         const separator = std.mem.indexOfScalar(u8, field, '=') orelse continue;
@@ -136,11 +137,22 @@ pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const 
             state_seen = true;
             state_valid = constantTimeSliceEqual(value, expected_state);
         } else if (std.mem.eql(u8, name, "error")) {
-            error_seen = true;
+            if (authorization_error != null) return error.DuplicateAuthorizationError;
+            authorization_error = try allocator.dupe(u8, value);
         }
     }
-    if (error_seen) return error.AuthorizationRejected;
     if (!state_valid) return error.StateMismatch;
+    if (authorization_error) |rejection| {
+        authorization_error = null;
+        defer allocator.free(rejection);
+        if (std.mem.eql(u8, rejection, "invalid_scope")) return error.InvalidScope;
+        if (std.mem.eql(u8, rejection, "access_denied")) return error.AccessDenied;
+        if (std.mem.eql(u8, rejection, "unauthorized_client")) return error.UnauthorizedClient;
+        if (std.mem.eql(u8, rejection, "invalid_request")) return error.InvalidAuthorizationRequest;
+        if (std.mem.eql(u8, rejection, "temporarily_unavailable")) return error.AuthorizationTemporarilyUnavailable;
+        if (std.mem.eql(u8, rejection, "server_error")) return error.AuthorizationServerError;
+        return error.AuthorizationRejected;
+    }
     return .{ .allocator = allocator, .code = code orelse return error.MissingAuthorizationCode };
 }
 
@@ -363,6 +375,7 @@ test "PKCE challenge and authorization URL use S256 and encoded public-client fi
     try std.testing.expect(std.mem.indexOf(u8, url, "code_challenge_method=S256") != null);
     try std.testing.expect(std.mem.indexOf(u8, url, "redirect_uri=http%3A%2F%2F127.0.0.1%3A8787%2Fcallback") != null);
     try std.testing.expect(std.mem.indexOf(u8, url, "offline_access") != null);
+    try std.testing.expect(std.mem.indexOf(u8, url, "profile") == null);
 }
 
 test "loopback callback requires exact state and handles percent encoding" {
@@ -370,7 +383,10 @@ test "loopback callback requires exact state and handles percent encoding" {
     defer callback.deinit();
     try std.testing.expectEqualStrings("one/two", callback.code);
     try std.testing.expectError(error.StateMismatch, parseLoopbackRequest(std.testing.allocator, "GET /callback?code=x&state=wrong HTTP/1.1", "expected"));
-    try std.testing.expectError(error.AuthorizationRejected, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=access_denied&state=expected HTTP/1.1", "expected"));
+    try std.testing.expectError(error.AccessDenied, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=access_denied&state=expected HTTP/1.1", "expected"));
+    try std.testing.expectError(error.InvalidScope, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=invalid_scope&state=expected HTTP/1.1", "expected"));
+    try std.testing.expectError(error.UnauthorizedClient, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=unauthorized_client&state=expected HTTP/1.1", "expected"));
+    try std.testing.expectError(error.StateMismatch, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=access_denied&state=wrong HTTP/1.1", "expected"));
 }
 
 test "token parsing requires a rotated refresh token" {

@@ -60,8 +60,8 @@ Auditui opens Yoto's login page, accepts one callback on the IPv4 loopback
 interface, validates OAuth state and PKCE, exchanges the one-time code, and
 stores the resulting rotating refresh token with mode `0600` permissions.
 
-The provider requests only `user:content:view`, `family:library:view`,
-`offline_access`, and `profile`. It does not request content-edit,
+The provider requests only `user:content:view`, `family:library:view`, and
+`offline_access`. It does not request profile data, content-edit,
 family-library-manage, device-management, media-upload, or icon-upload scopes.
 
 ### Development checkout
