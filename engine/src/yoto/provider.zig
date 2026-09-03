@@ -227,7 +227,17 @@ pub fn accessToken(allocator: std.mem.Allocator, io: std.Io, environ: std.proces
     return .{ .allocator = allocator, .token = try allocator.dupe(u8, rotated.access_token), .refreshed = true };
 }
 
-fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8) !void {
+/// Yoto's documented playable-content operation returns signed URLs only for
+/// content the token may read. Purchased cards inside groups answer 403 and
+/// expose only `yoto:#` track references, so they are listed but not streamed.
+fn cardHasSignedTracks(card: api.Card) bool {
+    for (card.content.chapters) |chapter| for (chapter.tracks) |track| {
+        if (track.trackUrl) |url| if (std.mem.startsWith(u8, url, "https://")) return true;
+    };
+    return false;
+}
+
+fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8, streamable: bool) !void {
     var author_storage: [1][]const u8 = undefined;
     const authors: []const []const u8 = if (card.metadata.authors.len != 0) card.metadata.authors else if (card.metadata.author) |author| blk: {
         author_storage[0] = author;
@@ -248,7 +258,7 @@ fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8) !void 
         .releaseDate = card.updatedAt orelse card.createdAt,
         .localPath = @as(?[]const u8, null),
         .downloaded = false,
-        .streamable = true,
+        .streamable = streamable,
         .downloadable = false,
     }, .{}, writer);
 }
@@ -264,14 +274,14 @@ fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         if (card.deleted or card.cardId.len == 0 or card.title.len == 0 or seen.contains(card.cardId)) continue;
         try seen.put(allocator, card.cardId, {});
         if (count != 0) try output.writer.writeByte(',');
-        try writeCard(&output.writer, card, account);
+        try writeCard(&output.writer, card, account, true);
         count += 1;
     }
     for (groups) |group| for (group.parsed.value.cards) |card| {
         if (card.deleted or card.cardId.len == 0 or card.title.len == 0 or seen.contains(card.cardId)) continue;
         try seen.put(allocator, card.cardId, {});
         if (count != 0) try output.writer.writeByte(',');
-        try writeCard(&output.writer, card, account);
+        try writeCard(&output.writer, card, account, cardHasSignedTracks(card));
         count += 1;
     };
     for (hydrated) |document| {
@@ -279,7 +289,7 @@ fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         if (card.deleted or card.cardId.len == 0 or card.title.len == 0 or seen.contains(card.cardId)) continue;
         try seen.put(allocator, card.cardId, {});
         if (count != 0) try output.writer.writeByte(',');
-        try writeCard(&output.writer, card, account);
+        try writeCard(&output.writer, card, account, true);
         count += 1;
     }
     try output.writer.writeAll("]}");
@@ -367,6 +377,14 @@ pub fn playableSource(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
         if (track.trackUrl) |url| try appendEdlPart(&output.writer, url, &first);
     if (first) return error.NoPlayableTracks;
     return output.toOwnedSlice();
+}
+
+test "only cards with signed https tracks are streamable" {
+    const signed: api.Card = .{ .cardId = "a", .title = "A", .content = .{ .chapters = &.{.{ .tracks = &.{.{ .trackUrl = "https://media.example/x" }} }} } };
+    const reference: api.Card = .{ .cardId = "b", .title = "B", .content = .{ .chapters = &.{.{ .tracks = &.{.{ .trackUrl = "yoto:#hash" }} }} } };
+    try std.testing.expect(cardHasSignedTracks(signed));
+    try std.testing.expect(!cardHasSignedTracks(reference));
+    try std.testing.expect(!cardHasSignedTracks(.{ .cardId = "c", .title = "C" }));
 }
 
 test "Yoto accounts reject traversal" {

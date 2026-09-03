@@ -15,8 +15,12 @@ URLs beyond the request that starts playback.
   playable signed URL.
 
 Yoto is intentionally capability-driven in Auditui. Yoto items are marked
-streamable when Yoto supplies playable media; they are not presented as
-offline-downloadable. Audible's existing AAXC download behavior is unchanged.
+streamable only when Yoto supplies signed playable media, which today means
+Make Your Own cards. Purchased cards placed in Library groups are listed with
+full metadata but the documented playable-content operation answers 403 for
+them, so they appear as "in your library" rather than streamable. Nothing is
+presented as offline-downloadable. Audible's existing AAXC download behavior is
+unchanged.
 
 ## Authentication
 
@@ -95,8 +99,9 @@ For a named account, pass the same name after the task separator, for example
 ## Library limits
 
 Yoto's documented `/content/mine` operation returns the authenticated user's
-MYO cards. The documented family-library operations expose cards assigned to
-groups. The public documentation does not currently provide a general endpoint
+MYO cards. The documented family-library group operations expose cards assigned
+to groups; the list operation returns item IDs only, so Auditui fetches each
+group individually, which is where Yoto expands the full card metadata. The public documentation does not currently provide a general endpoint
 that enumerates every purchased commercial card, so Auditui does not attempt to
 reconstruct that list through undocumented requests.
 
@@ -113,12 +118,15 @@ Supported:
 
 - Read-only MYO and family-group library refreshes.
 - Metadata, covers, chapters, and documented signed S3 playback URLs.
-- Local streaming through the existing mpv player.
+- Local streaming of Make Your Own cards through the existing mpv player.
 
 Not currently supported:
 
 - Enumerating all purchased commercial cards when they are not returned by an
   official endpoint used above.
+- Streaming purchased commercial cards: the documented playable-content
+  operation returns 403 for them and group responses carry only `yoto:#`
+  track references, not signed URLs.
 - Permanent offline downloads of Yoto media.
 - Creating or editing MYO cards or family-library groups.
 - Device discovery, configuration, commands, or telemetry.

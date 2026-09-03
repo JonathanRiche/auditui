@@ -1095,6 +1095,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                 break :blk yoto.playableSource(allocator, io, environ, account, item_id) catch |err| switch (err) {
                     error.FileNotFound, error.InvalidRefreshToken, error.TokenRefreshRejected, error.Unauthorized => return failure(writer, id, "REAUTH_REQUIRED", "the Yoto account must be connected again"),
                     error.NoPlayableTracks => return failure(writer, id, "UNSUPPORTED", "this Yoto card has no playable audio tracks"),
+                    error.ContentForbidden, error.ContentNotFound => return failure(writer, id, "UNSUPPORTED", "Yoto's public API does not provide playable audio for this card; only Make Your Own cards can be streamed"),
                     else => return failure(writer, id, "INTERNAL", "Yoto could not prepare this title for playback"),
                 };
             } else return failure(writer, id, "INVALID_REQUEST", "play requires localPath");
