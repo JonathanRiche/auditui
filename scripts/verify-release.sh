@@ -21,7 +21,7 @@ AUDITUI_INSTALL_PREFIX=$auditui_prefix "$auditui_package/install.sh"
 test -x "$auditui_prefix/bin/auditui"
 test -x "$auditui_prefix/bin/auditui-ui"
 test -x "$auditui_prefix/bin/auditui-engine"
-"$auditui_prefix/bin/auditui" --version | rg -q '^Auditui 0\.1\.0$'
+"$auditui_prefix/bin/auditui" --version | rg -q '^Auditui 0\.2\.0$'
 "$auditui_prefix/bin/auditui" --help | rg -q 'auditui auth login'
 "$auditui_prefix/bin/auditui" --help | rg -q -- '--provider NAME'
 test -f "$auditui_package/docs/yoto-provider.md"
