@@ -158,7 +158,7 @@ pub fn fetch(
         .response_writer = &output,
         .headers = .{
             .content_type = if (content_type) |value| .{ .override = value } else .default,
-            .user_agent = .{ .override = "audible-zig/0.3.1" },
+            .user_agent = .{ .override = "audible-zig/0.3.2" },
         },
         .extra_headers = wire_headers,
     });

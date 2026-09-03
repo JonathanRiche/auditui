@@ -474,8 +474,17 @@ export class AppView {
     const player = state.player;
     const hasTitle = player.itemId !== null;
     this.hasActivePlayer = hasTitle;
+    // Single-track cards have no chapters worth naming; multi-chapter titles
+    // show the chapter title when known, else a 1-based "ch 3/12".
+    const chapterIndex = Number(player.chapter);
+    const chapterCount = player.chapters.length;
+    const chapterLabel =
+      chapterCount > 1 && Number.isInteger(chapterIndex)
+        ? (player.chapters.find((chapter) => chapter.index === chapterIndex)?.title ??
+          `ch ${chapterIndex + 1}/${chapterCount}`)
+        : "";
     this.dockTitle.content = hasTitle
-      ? t`${fg(palette.accent)(player.paused ? "▶" : "❚❚")}  ${bold(player.title)}${player.chapter ? dim(fg(palette.muted)(`  ·  ch ${player.chapter}`)) : ""}`
+      ? t`${fg(palette.accent)(player.paused ? "▶" : "❚❚")}  ${bold(player.title)}${chapterLabel ? dim(fg(palette.muted)(`  ·  ${chapterLabel}`)) : ""}`
       : t`${fg(palette.subtle)("▶")}  ${fg(palette.muted)("Nothing playing")}`;
     // The timeline spans the whole dock like a desktop media player: every
     // cell the labels do not need becomes seek precision. A 36-cell bar made
