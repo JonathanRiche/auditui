@@ -23,10 +23,18 @@ test -x "$auditui_prefix/bin/auditui-ui"
 test -x "$auditui_prefix/bin/auditui-engine"
 "$auditui_prefix/bin/auditui" --version | rg -q '^Auditui 0\.1\.0$'
 "$auditui_prefix/bin/auditui" --help | rg -q 'auditui auth login'
+"$auditui_prefix/bin/auditui" --help | rg -q -- '--provider NAME'
+test -f "$auditui_package/docs/yoto-provider.md"
 auditui_login_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login --profile reader --country-code ca --no-encryption)
 test "$auditui_login_args" = 'quickstart --profile reader --country-code ca --no-encryption'
 auditui_default_login_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login)
 test "$auditui_default_login_args" = 'quickstart --profile default --country-code us'
+auditui_yoto_login_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login --provider yoto --account family --client-id public-client)
+test "$auditui_yoto_login_args" = 'auth login --provider yoto --account family --client-id public-client'
+auditui_yoto_env_login_args=$(YOTO_CLIENT_ID=public-client AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" auth login --provider yoto --profile reader)
+test "$auditui_yoto_env_login_args" = 'auth login --provider yoto --account reader'
+auditui_yoto_refresh_args=$(AUDITUI_ENGINE=/bin/echo "$auditui_prefix/bin/auditui" library refresh --provider yoto --account family)
+test "$auditui_yoto_refresh_args" = 'library refresh --provider yoto --account family'
 
 auditui_xdg=$auditui_verify/xdg
 mkdir -p "$auditui_xdg/config" "$auditui_xdg/data" "$auditui_xdg/state" "$auditui_xdg/cache"

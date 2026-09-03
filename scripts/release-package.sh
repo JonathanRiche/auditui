@@ -11,7 +11,7 @@ auditui_asset=auditui-${auditui_platform}-${auditui_arch}.tar.gz
 auditui_stage=$(mktemp -d)
 trap 'rm -rf -- "$auditui_stage"' EXIT HUP INT TERM
 
-mkdir -p "$auditui_dist" "$auditui_stage/$auditui_name/bin"
+mkdir -p "$auditui_dist" "$auditui_stage/$auditui_name/bin" "$auditui_stage/$auditui_name/docs"
 cd "$auditui_root"
 mise run zig:build-release
 mise exec -- bun build tui/src/main.ts --compile --outfile "$auditui_stage/$auditui_name/bin/auditui-ui"
@@ -19,6 +19,7 @@ install -m 0755 engine/zig-out/bin/audible-zig "$auditui_stage/$auditui_name/bin
 install -m 0755 packaging/auditui "$auditui_stage/$auditui_name/bin/auditui"
 install -m 0755 packaging/install.sh "$auditui_stage/$auditui_name/install.sh"
 install -m 0644 LICENSE NOTICE README.md THIRD_PARTY_NOTICES.md "$auditui_stage/$auditui_name/"
+install -m 0644 docs/yoto-provider.md "$auditui_stage/$auditui_name/docs/"
 
 auditui_archive=$auditui_dist/$auditui_asset
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C "$auditui_stage" -czf "$auditui_archive" "$auditui_name"

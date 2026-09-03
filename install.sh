@@ -99,5 +99,6 @@ if [ "$auditui_path_ready" -eq 0 ]; then
   fi
 fi
 
-printf '%s\n' 'Run: auditui auth login'
-printf '%s\n' 'Then: auditui'
+printf '%s\n' 'Audible: auditui auth login'
+printf '%s\n' 'Yoto: YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto'
+printf '%s\n' 'Launch: auditui'

@@ -29,6 +29,13 @@ auditui auth login
 auditui
 ```
 
+Yoto users must create a dashboard Public Client and register
+`http://127.0.0.1:8787/callback` before running:
+
+```sh
+YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto
+```
+
 The bootstrap script detects the supported platform, downloads both assets,
 verifies SHA-256 before extraction, and installs to `~/.local/bin`. Set
 `AUDITUI_INSTALL_PREFIX` to choose a different prefix.
@@ -44,7 +51,8 @@ The release gate verifies formatting, linting, types, Zig and TUI tests,
 protocol and compatibility contracts, durable download and mpv integration,
 secret scanning, license metadata, a clean dependency install, 80×24 startup,
 the package installer, the remote-style bootstrap installer, database
-migrations, and the packaged CLI.
+migrations, packaged Audible and Yoto command routing, and the packaged Yoto
+provider guide.
 
 Live Audible authentication is intentionally opt-in and remains a manual
 pre-release check because it uses private account data and an interactive

@@ -1,9 +1,9 @@
 # Auditui
 
 Auditui is a Linux-first terminal audiobook application with a native Zig engine
-and a Bun/OpenTUI interface. Audible is its first provider; the neutral name
-leaves room for additional audiobook providers behind the same library and
-player experience.
+and a Bun/OpenTUI interface. Audible provides the full offline workflow, while
+Yoto support uses Yoto's documented public API for MYO and family-group content
+behind the same library and player experience.
 
 Its implemented application path includes native browser authentication,
 automatic library refresh, search, durable resumable AAXC downloads, cover and
@@ -42,6 +42,22 @@ needed, for example `auditui auth login --country-code ca` for Canada. Add
 passphrase prompts. Auditui requires `mpv` for playback and `sqlite3` for durable
 non-secret state.
 
+To connect Yoto, first create a Public Client in the Yoto developer dashboard
+and register `http://127.0.0.1:8787/callback`. Then use either the environment
+variable or the equivalent option:
+
+```sh
+YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto
+# or: auditui auth login --provider yoto --client-id your-public-client-id
+auditui library refresh --provider yoto
+auditui
+```
+
+The Yoto client ID is public configuration, not a secret. Yoto credentials are
+stored owner-only with mode `0600`; rotating refresh tokens are atomically
+replaced. See the [Yoto provider guide](docs/yoto-provider.md) for the supported
+content surface and current limitations.
+
 The installer downloads the release archive and checksum from GitHub Releases,
 verifies it, and installs `auditui` under `~/.local/bin`. It never needs Git,
 Zig, Bun, Mise, or root access. When needed, it detects Bash, Zsh, or Fish and
@@ -72,6 +88,14 @@ commands:
 auditui auth login --profile default --country-code us
 auditui library refresh
 auditui
+```
+
+Provider-specific refreshes can be run explicitly. Named Yoto accounts use
+`--account`; Audible retains its compatible `--profile` terminology:
+
+```sh
+auditui library refresh --provider audible --profile default
+auditui library refresh --provider yoto --account default
 ```
 
 The same secure flows are available without leaving the app. Press `a` on the

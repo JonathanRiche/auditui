@@ -11,18 +11,26 @@ Auditui — your audiobook library in the terminal
 
 Usage:
   auditui                         Open the terminal app
-  auditui auth login [OPTIONS]    Connect an Audible account in the browser
-  auditui auth status             Show local account profiles
-  auditui library refresh         Refresh the active provider library
+  auditui auth login [OPTIONS]    Connect an Audible or Yoto account
+  auditui auth status             Show local Audible profiles
+  auditui library refresh [OPTS]  Refresh an Audible or Yoto library
   auditui doctor                  Check required runtime components
   auditui cli COMMAND ...         Run the native provider CLI
   auditui --version               Show the installed version
   auditui --help                  Show this help
 
 Auth options:
+  --provider NAME                 Provider: audible (default) or yoto
   --profile NAME                  Local profile name (default: default)
+  --account NAME                  Provider account name (Yoto; default: default)
   --country-code CC               Audible marketplace (default: us)
-  --no-encryption                 Use a private 0600 file without a passphrase
+  --client-id ID                  Yoto Public Client ID (or YOTO_CLIENT_ID)
+  --no-encryption                 Audible: private 0600 file, no passphrase
+
+Library refresh options:
+  --provider NAME                 Provider: audible (default) or yoto
+  --profile NAME                  Audible profile name
+  --account NAME                  Yoto account name
 EOF
 }
 
@@ -37,19 +45,41 @@ case "$command" in
     case "$subcommand" in
       login)
         shift 2
+        auditui_provider=audible
         auditui_profile=${AUDITUI_PROFILE:-default}
+        auditui_account=${AUDITUI_ACCOUNT:-default}
+        auditui_account_explicit=0
         auditui_country=${AUDITUI_COUNTRY_CODE:-us}
+        auditui_country_explicit=0
         auditui_no_encryption=0
+        auditui_client_id=
         while [ "$#" -gt 0 ]; do
           case "$1" in
+            --provider)
+              [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --provider requires a value' >&2; exit 2; }
+              auditui_provider=$2
+              shift 2
+              ;;
             --profile|-P)
               [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --profile requires a value' >&2; exit 2; }
               auditui_profile=$2
               shift 2
               ;;
+            --account)
+              [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --account requires a value' >&2; exit 2; }
+              auditui_account=$2
+              auditui_account_explicit=1
+              shift 2
+              ;;
             --country-code|-cc)
               [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --country-code requires a value' >&2; exit 2; }
               auditui_country=$2
+              auditui_country_explicit=1
+              shift 2
+              ;;
+            --client-id)
+              [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --client-id requires a value' >&2; exit 2; }
+              auditui_client_id=$2
               shift 2
               ;;
             --no-encryption)
@@ -66,6 +96,20 @@ case "$command" in
               ;;
           esac
         done
+        if [ "$auditui_provider" = yoto ]; then
+          [ "$auditui_country_explicit" -eq 0 ] || { printf '%s\n' 'auditui: --country-code applies only to Audible' >&2; exit 2; }
+          [ "$auditui_no_encryption" -eq 0 ] || { printf '%s\n' 'auditui: Yoto credentials always use private mode-0600 storage; omit --no-encryption' >&2; exit 2; }
+          if [ "$auditui_account" = default ] && [ "$auditui_profile" != default ]; then
+            auditui_account=$auditui_profile
+          fi
+          if [ -n "$auditui_client_id" ]; then
+            exec "$auditui_engine" auth login --provider yoto --account "$auditui_account" --client-id "$auditui_client_id"
+          fi
+          exec "$auditui_engine" auth login --provider yoto --account "$auditui_account"
+        fi
+        [ "$auditui_provider" = audible ] || { printf 'auditui: unknown provider: %s\n' "$auditui_provider" >&2; exit 2; }
+        [ "$auditui_account_explicit" -eq 0 ] || { printf '%s\n' 'auditui: --account applies only to Yoto; use --profile for Audible' >&2; exit 2; }
+        [ -z "$auditui_client_id" ] || { printf '%s\n' 'auditui: --client-id applies only to Yoto' >&2; exit 2; }
         if [ "$auditui_no_encryption" -eq 1 ]; then
           exec "$auditui_engine" quickstart --profile "$auditui_profile" --country-code "$auditui_country" --no-encryption
         fi
