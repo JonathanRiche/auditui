@@ -115,7 +115,7 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
     const callback = auth.parseLoopbackRequest(allocator, clean_line, &pending.state) catch |err| {
         const guidance = switch (err) {
             error.InvalidScope => "Yoto rejected a requested scope. In the developer dashboard, enable family:library:view and user:content:view, save the application, then retry.",
-            error.AccessDenied => "Yoto authorization was cancelled or declined. Retry and approve the unverified-app consent screen.",
+            error.AccessDenied => "Yoto denied this account. Retry and sign in with the adult account that owns the Yoto family, then approve the unverified-app consent screen.",
             error.UnauthorizedClient => "Yoto rejected this client. Confirm it is a Public Client and its callback is exactly http://127.0.0.1:8787/callback.",
             error.StateMismatch => "The callback did not belong to this login attempt. Close older Yoto login tabs and retry using only the newly opened tab.",
             error.AuthorizationTemporarilyUnavailable, error.AuthorizationServerError => "Yoto's authorization service is temporarily unavailable. Retry shortly.",

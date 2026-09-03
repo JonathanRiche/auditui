@@ -82,6 +82,12 @@ auditui auth login --provider yoto --client-id YOUR_CLIENT_ID
 auditui
 ```
 
+The developer-dashboard account may use a different email, but browser login
+must use an adult account belonging to the Yoto family whose library you want
+to access. Auditui asks Yoto to show a fresh login instead of silently reusing
+the dashboard session. Unverified applications are supported; explicitly
+accept Yoto's unverified-app warning on the consent screen.
+
 That login command performs the first library refresh and stores the public
 client ID with the private account credentials. Future refreshes and launches
 do not need the ID again. For a second account, add `--account NAME` to the same

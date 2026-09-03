@@ -91,6 +91,10 @@ pub fn buildAuthorizationUrl(allocator: std.mem.Allocator, config: Config, pendi
     try appendQueryField(&output.writer, &first, "code_challenge_method", "S256");
     try appendQueryField(&output.writer, &first, "redirect_uri", config.redirect_uri);
     try appendQueryField(&output.writer, &first, "state", &pending.state);
+    // A developer may be signed into the dashboard with an account that does
+    // not own the Yoto family being connected. Never silently reuse that
+    // browser session, especially when connecting multiple accounts.
+    try appendQueryField(&output.writer, &first, "prompt", "login");
     return output.toOwnedSlice();
 }
 
@@ -376,6 +380,7 @@ test "PKCE challenge and authorization URL use S256 and encoded public-client fi
     try std.testing.expect(std.mem.indexOf(u8, url, "redirect_uri=http%3A%2F%2F127.0.0.1%3A8787%2Fcallback") != null);
     try std.testing.expect(std.mem.indexOf(u8, url, "offline_access") != null);
     try std.testing.expect(std.mem.indexOf(u8, url, "profile") == null);
+    try std.testing.expect(std.mem.indexOf(u8, url, "prompt=login") != null);
 }
 
 test "loopback callback requires exact state and handles percent encoding" {

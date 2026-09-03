@@ -38,6 +38,12 @@ file and no exported shell variable are required:
 auditui auth login --provider yoto --client-id YOUR_CLIENT_ID
 ```
 
+Sign into the browser prompt with an adult account belonging to the Yoto
+family you want to connect, even if a different email owns the developer
+application. Auditui forces a fresh login so an unrelated developer-dashboard
+session cannot be reused silently. Explicitly accept the warning shown for an
+unverified application.
+
 To connect a second account while keeping its library and playback state
 separate, add a memorable account name:
 
