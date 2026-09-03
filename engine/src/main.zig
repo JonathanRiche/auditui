@@ -32,7 +32,7 @@ const help =
 ;
 
 fn writeHealth(writer: *std.Io.Writer) !void {
-    try std.json.Stringify.value(.{ .status = "ok", .engine = "audible-zig", .version = "0.2.1", .protocolVersion = engine.rpc.version }, .{}, writer);
+    try std.json.Stringify.value(.{ .status = "ok", .engine = "audible-zig", .version = "0.3.0", .protocolVersion = engine.rpc.version }, .{}, writer);
     try writer.writeByte('\n');
 }
 
@@ -693,7 +693,7 @@ fn run(init: std.process.Init) !void {
 
     if (args.len <= 1) return stdout.writeAll(help ++ "\n");
     for (args[1..]) |arg| if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) return stdout.writeAll(help ++ "\n");
-    if (std.mem.eql(u8, args[1], "--version")) return stdout.writeAll("audible-zig 0.2.1\n");
+    if (std.mem.eql(u8, args[1], "--version")) return stdout.writeAll("audible-zig 0.3.0\n");
     try validateRequiredOptionValues(args[1..]);
     const command_index = try rootCommandIndex(args);
     const command = args[command_index];
