@@ -18,7 +18,7 @@ tui/dist/
 coverage/
 dist/
 .tmp/
-downloads/
+/downloads/
 fixtures/private/
 **/auth*.json
 !protocol/fixtures/*.json

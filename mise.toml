@@ -50,11 +50,13 @@ run = "bun run lint"
 
 [tasks."tui:check"]
 description = "Type-check the OpenTUI client"
+depends = ["tui:install"]
 dir = "tui"
 run = "bun run typecheck"
 
 [tasks."tui:test"]
 description = "Run TUI unit and contract tests"
+depends = ["tui:install"]
 dir = "tui"
 run = "bun test"
 
