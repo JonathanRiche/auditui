@@ -1268,10 +1268,34 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
             loadBookmarks(allocator, runtime) catch return failure(writer, id, "INTERNAL", "bookmarks could not be loaded");
             return playerSuccess(allocator, io, writer, id, runtime);
         }
+        // A finished title starts over when the listener presses play, seeks,
+        // or changes chapter. mpv sits idle after EOF and would otherwise
+        // reject those commands, which used to surface as a misleading
+        // "mpv IPC is not ready" error.
+        const restart = runtime.ended and runtime.local_path != null and
+            (std.mem.eql(u8, command, "toggle") or std.mem.eql(u8, command, "seek-relative") or
+                std.mem.eql(u8, command, "seek-absolute") or std.mem.eql(u8, command, "chapter-next") or
+                std.mem.eql(u8, command, "chapter-previous") or std.mem.eql(u8, command, "chapter-set"));
+        if (restart) {
+            sendMpv(io, socket_path, .{ .loadfile = runtime.local_path.? }) catch return failure(writer, id, "INTERNAL", "the title has ended and could not be restarted");
+            var attempt: u8 = 0;
+            while (attempt < 80) : (attempt += 1) {
+                const state = mpv.queryState(allocator, io, socket_path, .{ .path = runtime.local_path }) catch {
+                    try std.Io.sleep(io, .fromMilliseconds(25), .awake);
+                    continue;
+                };
+                if (state.duration > 0) break;
+                try std.Io.sleep(io, .fromMilliseconds(25), .awake);
+            }
+            runtime.ended = false;
+            runtime.paused = false;
+            runtime.position_seconds = 0;
+            runtime.chapter = 0;
+        }
         const ipc_command: mpv.Command = if (std.mem.eql(u8, command, "pause"))
             .{ .pause = true }
         else if (std.mem.eql(u8, command, "toggle"))
-            .pause_toggle
+            (if (restart) mpv.Command{ .pause = false } else .pause_toggle)
         else if (std.mem.eql(u8, command, "seek-relative"))
             .{ .seek_relative = if (params.object.get("value")) |value| if (value == .float) value.float else if (value == .integer) @floatFromInt(value.integer) else return failure(writer, id, "INVALID_REQUEST", "value must be a number") else return failure(writer, id, "INVALID_REQUEST", "value is required") }
         else if (std.mem.eql(u8, command, "seek-absolute"))
@@ -1295,7 +1319,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         } else return failure(writer, id, "NOT_IMPLEMENTED", "unknown player command");
         sendMpv(io, socket_path, ipc_command) catch return failure(writer, id, "INTERNAL", "mpv IPC is not ready or disconnected");
         if (std.mem.eql(u8, command, "pause")) runtime.paused = true;
-        if (std.mem.eql(u8, command, "toggle")) runtime.paused = !runtime.paused;
+        if (std.mem.eql(u8, command, "toggle") and !restart) runtime.paused = !runtime.paused;
         if (std.mem.eql(u8, command, "set-speed")) runtime.speed = numberParam(params.object, "value").?;
         if (std.mem.eql(u8, command, "set-volume")) runtime.volume = numberParam(params.object, "value").?;
         if (runtime.database) |database| {

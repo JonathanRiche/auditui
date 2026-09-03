@@ -203,8 +203,10 @@ export class AppView {
     this.dockTitle = text(ctx, "dock-title", "", {
       width: "100%",
       bg: palette.surface,
-      onMouseDown: (event) => this.toggleFromMouse(event.x, event),
-      onMouseOver: () => ctx.setMousePointer("pointer"),
+      onMouseDown: (event) => this.dockTitleFromMouse(event.x, event),
+      onMouseOver: () => {
+        if (this.hasActivePlayer) ctx.setMousePointer("pointer");
+      },
       onMouseOut: () => ctx.setMousePointer("default"),
     });
     this.dockProgress = text(ctx, "dock-progress", "", {
@@ -213,7 +215,11 @@ export class AppView {
       onMouseDown: (event) => this.seekFromMouse(event.x, true, event),
       onMouseDrag: (event) => this.seekFromMouse(event.x, false, event),
       onMouseDragEnd: (event) => this.seekFromMouse(event.x, true, event),
-      onMouseOver: () => ctx.setMousePointer("crosshair"),
+      onMouseScroll: (event) => this.wheelSeek(event),
+      onMouseMove: (event) =>
+        ctx.setMousePointer(this.isOverDockBar(event.x) ? "crosshair" : "default"),
+      onMouseOver: (event) =>
+        ctx.setMousePointer(this.isOverDockBar(event.x) ? "crosshair" : "default"),
       onMouseOut: () => ctx.setMousePointer("default"),
     });
     this.dockHelp = text(ctx, "dock-help", "", {
@@ -469,31 +475,69 @@ export class AppView {
     const hasTitle = player.itemId !== null;
     this.hasActivePlayer = hasTitle;
     this.dockTitle.content = hasTitle
-      ? t`${fg(palette.accent)(player.paused ? "▶" : "❚❚")}  ${bold(player.title)}${player.chapter ? dim(fg(palette.muted)(`  ·  ${player.chapter}`)) : ""}`
+      ? t`${fg(palette.accent)(player.paused ? "▶" : "❚❚")}  ${bold(player.title)}${player.chapter ? dim(fg(palette.muted)(`  ·  ch ${player.chapter}`)) : ""}`
       : t`${fg(palette.subtle)("▶")}  ${fg(palette.muted)("Nothing playing")}`;
-    const barWidth = Math.max(10, Math.min(36, state.width - 42));
+    // The timeline spans the whole dock like a desktop media player: every
+    // cell the labels do not need becomes seek precision. A 36-cell bar made
+    // each cell almost two minutes of a long audiobook.
     const elapsed = formatTime(player.positionSeconds);
+    const total = formatTime(player.durationSeconds);
+    const readout = `${player.speed.toFixed(2)}×  vol ${player.volume}%`;
+    const labels = elapsed.length + 2 + 2 + total.length + 3 + readout.length;
+    const dockPadding = 2; // matches this.dock.paddingX
+    const barWidth = Math.max(10, state.width - dockPadding * 2 - labels);
     this.dockBarStart = elapsed.length + 2;
     this.dockBarWidth = barWidth;
     this.playerDuration = player.durationSeconds;
     this.dockProgress.content = concat(
       t`${fg(palette.muted)(elapsed)}  `,
       progress(player.positionSeconds, player.durationSeconds, barWidth),
-      t`  ${fg(palette.muted)(formatTime(player.durationSeconds))}   ${fg(palette.subtle)(`${player.speed.toFixed(2)}×  vol ${player.volume}%`)}`,
+      t`  ${fg(palette.muted)(total)}   ${fg(palette.subtle)(readout)}`,
     );
-    const mouseHelp = state.width >= 92 ? "    mouse: play/pause · seek" : "";
+    const mouseHelp =
+      state.width >= 120
+        ? "    mouse: ▶ play/pause · title opens player · bar click/drag/wheel seeks"
+        : state.width >= 92
+          ? "    mouse: play/pause · seek"
+          : "";
     this.dockHelp.content = t`${fg(palette.subtle)(`? help    / search    r refresh    q back/quit${mouseHelp}`)}`;
   }
 
-  private toggleFromMouse(
+  private dockTitleFromMouse(
     x: number,
     event: { button: number; preventDefault(): void; stopPropagation(): void },
   ): void {
-    // Only the leading play/pause glyph is a control; the title remains inert.
-    if (event.button !== 0 || !this.hasActivePlayer || x > this.dockTitle.screenX + 2) return;
+    if (event.button !== 0 || !this.hasActivePlayer) return;
     event.preventDefault();
     event.stopPropagation();
-    this.options.onTogglePlayback();
+    // The leading glyph toggles playback; the title itself opens the player
+    // screen, so every part of the row that shows a hand cursor does something.
+    if (x <= this.dockTitle.screenX + 2) this.options.onTogglePlayback();
+    else this.options.onNavigate("now-playing");
+  }
+
+  /** Screen geometry of the dock timeline; used by tests and hit-testing. */
+  timelineGeometry(): { start: number; width: number } {
+    return { start: this.dockProgress.screenX + this.dockBarStart, width: this.dockBarWidth };
+  }
+
+  private isOverDockBar(x: number): boolean {
+    if (this.playerDuration <= 0 || this.dockBarWidth <= 1) return false;
+    const start = this.dockProgress.screenX + this.dockBarStart;
+    return x >= start && x < start + this.dockBarWidth;
+  }
+
+  private wheelSeek(event: {
+    scroll?: { direction: string };
+    preventDefault(): void;
+    stopPropagation(): void;
+  }): void {
+    if (!this.hasActivePlayer || !event.scroll) return;
+    const direction = event.scroll.direction;
+    if (direction !== "up" && direction !== "down") return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.options.onPlayerCommand?.(direction === "up" ? "seek-back" : "seek-forward");
   }
 
   private dockHelpFromMouse(
@@ -524,6 +568,9 @@ export class AppView {
     event: { button: number; preventDefault(): void; stopPropagation(): void },
   ): void {
     if (event.button !== 0 || this.playerDuration <= 0 || this.dockBarWidth <= 1) return;
+    // Presses on the time labels or speed readout are not seeks; landing on
+    // "1:07:15" used to jump straight to the end of the book.
+    if (force && !this.isOverDockBar(x)) return;
     const now = Date.now();
     if (!force && now - this.lastDragSeekAt < 80) return;
     this.lastDragSeekAt = now;
@@ -531,7 +578,10 @@ export class AppView {
     const ratio = Math.max(0, Math.min(1, (x - start) / (this.dockBarWidth - 1)));
     event.preventDefault();
     event.stopPropagation();
-    this.options.onSeek(ratio * this.playerDuration);
+    // Never seek into the final seconds: that ends playback instead of
+    // positioning it.
+    const target = Math.min(ratio * this.playerDuration, Math.max(0, this.playerDuration - 5));
+    this.options.onSeek(target);
   }
 
   private renderHelp(state: AppState): void {

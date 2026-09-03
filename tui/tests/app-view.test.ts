@@ -283,6 +283,7 @@ describe("retained app view", () => {
     const setup = await createTestRenderer({ width: 120, height: 30 });
     renderers.push(setup.renderer);
     const seeks: number[] = [];
+    const navigations: string[] = [];
     let toggles = 0;
     const view = new AppView(setup.renderer, {
       imageProtocol: "blocks",
@@ -293,7 +294,9 @@ describe("retained app view", () => {
       onTogglePlayback() {
         toggles += 1;
       },
-      onNavigate() {},
+      onNavigate(screen) {
+        navigations.push(screen);
+      },
       onOpenSearch() {},
     });
     setup.renderer.root.add(view.root);
@@ -326,20 +329,38 @@ describe("retained app view", () => {
     await mouse.click(title.screenX, title.screenY, MouseButtons.LEFT);
     expect(toggles).toBe(1);
 
-    // "0:00  " occupies six cells before the 36-cell progress bar.
-    const barStart = timeline.screenX + 6;
-    await mouse.click(barStart + 18, timeline.screenY, MouseButtons.LEFT);
-    expect(seeks.at(-1)).toBeGreaterThan(45);
-    expect(seeks.at(-1)).toBeLessThan(60);
-
-    await mouse.drag(
-      barStart + 2,
-      timeline.screenY,
-      barStart + 35,
+    // The bar fills the dock: "0:00  " then the bar, then "  1:40   1.00×  vol 100%".
+    const { start: barStart, width: barWidth } = view.timelineGeometry();
+    expect(barStart).toBe(timeline.screenX + 6);
+    expect(barWidth).toBe(120 - 4 - (4 + 2 + 2 + 4 + 3 + 15));
+    await mouse.click(
+      barStart + Math.round((barWidth - 1) / 2),
       timeline.screenY,
       MouseButtons.LEFT,
     );
-    expect(seeks.at(-1)).toBeGreaterThan(95);
+    expect(seeks.at(-1)).toBeGreaterThan(45);
+    expect(seeks.at(-1)).toBeLessThan(55);
+
+    // Pressing the time labels or speed readout must not seek.
+    const seekCount = seeks.length;
+    await mouse.click(timeline.screenX + 1, timeline.screenY, MouseButtons.LEFT);
+    await mouse.click(barStart + barWidth + 3, timeline.screenY, MouseButtons.LEFT);
+    expect(seeks.length).toBe(seekCount);
+
+    // Dragging to the very end stops short of it so playback does not finish.
+    await mouse.drag(
+      barStart + 2,
+      timeline.screenY,
+      barStart + barWidth - 1,
+      timeline.screenY,
+      MouseButtons.LEFT,
+    );
+    expect(seeks.at(-1)).toBe(95);
+
+    // Clicking the title text (not the glyph) opens the player screen.
+    await mouse.click(title.screenX + 8, title.screenY, MouseButtons.LEFT);
+    expect(toggles).toBe(1);
+    expect(navigations).toEqual(["now-playing"]);
   });
 
   test("makes every header destination clickable", async () => {
