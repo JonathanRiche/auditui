@@ -60,12 +60,17 @@ Leave **Allowed Logout URLs**, **Application Logo**, and **Application Privacy
 Policy URL** empty for local development. They can be filled with real hosted
 URLs before applying for Yoto verification.
 
-4. Under **Scopes**, select only:
+4. Under **Scopes**, select:
    - `family:library:view`
    - `user:content:view`
+   - `offline_access`, if the dashboard offers it
 
-Do not select either `manage` scope or `user:icons:manage`; Auditui does not
-need write access.
+`offline_access` lets Yoto issue a refresh token so you do not have to sign in
+again every few hours. If your application has not been approved for it, Yoto
+reports "scopes that have not been pre-approved: offline_access"; Auditui then
+automatically reconnects without it and asks you to sign in again when the
+session expires. Do not select either `manage` scope or `user:icons:manage`;
+Auditui does not need write access.
 
 ![The read-only scopes available in the Yoto developer dashboard](docs/images/yoto-select-scopes.png)
 

@@ -82,11 +82,51 @@ pub fn deinitAccounts(allocator: std.mem.Allocator, accounts: []Account) void {
     allocator.free(accounts);
 }
 
+const offline_access_notice =
+    "Yoto has not approved offline_access for this application, so Auditui is connecting without a refresh token. " ++
+    "A second sign-in tab has opened; approve it to finish. You will need to run this login again when the session expires (usually a few hours).";
+
 pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8, client_id: []const u8, writer: *std.Io.Writer) !void {
     if (!validAccount(account)) return error.InvalidAccountName;
     try ensureCredentialDirectory(allocator, io, environ);
-    const config: auth.Config = .{ .client_id = client_id };
+    var config: auth.Config = .{ .client_id = client_id };
     try config.validate();
+
+    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(8787) };
+    var server = try address.listen(io, .{ .kernel_backlog = 1, .reuse_address = true });
+    defer server.deinit(io);
+
+    const tokens = authorizeOnce(allocator, io, &server, config, writer) catch |err| switch (err) {
+        error.OfflineAccessNotApproved => blk: {
+            try writer.print("{s}\n\n", .{offline_access_notice});
+            try writer.flush();
+            config = config.withoutOfflineAccess();
+            break :blk try authorizeOnce(allocator, io, &server, config, writer);
+        },
+        else => return err,
+    };
+    defer tokens.deinit();
+
+    const credential_path = try credentialsPath(allocator, environ, account);
+    defer allocator.free(credential_path);
+    try auth.saveCredentials(allocator, io, credential_path, client_id, tokens);
+    try writer.print("Connected Yoto account {s}.\n", .{account});
+    if (tokens.refresh_token.len == 0) try writer.writeAll("This session cannot be refreshed automatically; rerun this login when Yoto reports the session expired.\n");
+}
+
+fn respondPlain(io: std.Io, stream: std.Io.net.Stream, status_line: []const u8, body: []const u8) void {
+    var write_buffer: [1024]u8 = undefined;
+    var response: std.Io.net.Stream.Writer = .init(stream, io, &write_buffer);
+    response.interface.print("{s}\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: {d}\r\n\r\n{s}", .{ status_line, body.len, body }) catch {};
+    response.interface.flush() catch {};
+}
+
+/// Runs one browser authorization round trip on the already-bound loopback
+/// listener and exchanges the code for tokens. Returns
+/// error.OfflineAccessNotApproved when Yoto's only complaint is that the
+/// application lacks approval for the offline_access scope, so the caller
+/// can retry without it.
+fn authorizeOnce(allocator: std.mem.Allocator, io: std.Io, server: anytype, config: auth.Config, writer: *std.Io.Writer) !auth.TokenSet {
     var pending = try auth.PendingAuthorization.generate(io);
     defer {
         std.crypto.secureZero(u8, &pending.verifier);
@@ -95,9 +135,6 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
     const login_url = try auth.buildAuthorizationUrl(allocator, config, pending);
     defer allocator.free(login_url);
 
-    const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(8787) };
-    var server = try address.listen(io, .{ .kernel_backlog = 1, .reuse_address = true });
-    defer server.deinit(io);
     try writer.writeAll("Open this URL in your browser to connect Yoto:\n");
     try writer.print("{s}\n\nWaiting for Yoto authorization on 127.0.0.1:8787…\n", .{login_url});
     try writer.flush();
@@ -115,7 +152,14 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
     var rejection_description: ?[]u8 = null;
     defer if (rejection_description) |value| allocator.free(value);
     const callback = auth.parseLoopbackRequestDetailed(allocator, clean_line, &pending.state, &rejection_description) catch |err| {
-        const guidance = switch (err) {
+        const unapproved_scopes = rejection_description != null and std.mem.indexOf(u8, rejection_description.?, "pre-approved") != null;
+        if (err == error.AccessDenied and unapproved_scopes and config.requestsOfflineAccess() and std.mem.indexOf(u8, rejection_description.?, "offline_access") != null) {
+            respondPlain(io, stream, "HTTP/1.1 200 OK", offline_access_notice);
+            return error.OfflineAccessNotApproved;
+        }
+        const guidance: []const u8 = if (unapproved_scopes)
+            "Yoto denied the login because a requested scope is not enabled on your application. Open https://dashboard.yoto.dev/, edit the application, tick family:library:view and user:content:view under Scopes, save, then retry."
+        else switch (err) {
             error.InvalidScope => "Yoto rejected a requested scope. In the developer dashboard, enable family:library:view and user:content:view, save the application, then retry.",
             error.AccessDenied => "Yoto denied this account. Retry and sign in with the adult account that owns the Yoto family, then approve the unverified-app consent screen.",
             error.UnauthorizedClient => "Yoto rejected this client. Confirm it is a Public Client and its callback is exactly http://127.0.0.1:8787/callback.",
@@ -126,24 +170,13 @@ pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.En
         writer.print("{s}\n", .{guidance}) catch {};
         if (rejection_description) |description| writer.print("Yoto's exact reason: {s}\n", .{description}) catch {};
         writer.flush() catch {};
-        var write_buffer: [512]u8 = undefined;
-        var response: std.Io.net.Stream.Writer = .init(stream, io, &write_buffer);
-        response.interface.print("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: {d}\r\n\r\n{s}", .{ guidance.len, guidance }) catch {};
-        response.interface.flush() catch {};
+        respondPlain(io, stream, "HTTP/1.1 400 Bad Request", guidance);
         return err;
     };
     defer callback.deinit();
     const tokens = try auth.exchangeAuthorizationCode(allocator, io, config, callback.code, &pending.verifier, std.Io.Clock.real.now(io).toSeconds());
-    defer tokens.deinit();
-    const credential_path = try credentialsPath(allocator, environ, account);
-    defer allocator.free(credential_path);
-    try auth.saveCredentials(allocator, io, credential_path, client_id, tokens);
-    var write_buffer: [1024]u8 = undefined;
-    var response: std.Io.net.Stream.Writer = .init(stream, io, &write_buffer);
-    const body = "Yoto is connected to Auditui. You can close this tab.";
-    try response.interface.print("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nContent-Length: {d}\r\n\r\n{s}", .{ body.len, body });
-    try response.interface.flush();
-    try writer.print("Connected Yoto account {s}.\n", .{account});
+    respondPlain(io, stream, "HTTP/1.1 200 OK", "Yoto is connected to Auditui. You can close this tab.");
+    return tokens;
 }
 
 pub const Access = struct {
@@ -166,6 +199,7 @@ pub fn accessToken(allocator: std.mem.Allocator, io: std.Io, environ: std.proces
     const now = std.Io.Clock.real.now(io).toSeconds();
     if (!force_refresh and stored.expires_at > now + 30)
         return .{ .allocator = allocator, .token = try allocator.dupe(u8, stored.access_token), .refreshed = false };
+    if (stored.refresh_token.len == 0) return error.YotoSessionExpired;
     const rotated = try auth.refreshTokens(allocator, io, .{ .client_id = stored.client_id }, stored.refresh_token, now);
     defer rotated.deinit();
     try auth.saveCredentials(allocator, io, credential_path, stored.client_id, rotated);

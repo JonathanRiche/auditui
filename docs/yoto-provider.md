@@ -28,8 +28,12 @@ http://127.0.0.1:8787/callback
 ```
 
 The README's [illustrated Yoto setup](../README.md#connect-yoto) shows every
-dashboard field, the two read-only scopes to select, and which optional fields
-to leave blank during development.
+dashboard field, the scopes to select, and which optional fields to leave
+blank during development. Every scope Auditui requests must be approved for
+the application; when Yoto denies a login the CLI prints Yoto's exact reason.
+If only `offline_access` is unapproved, Auditui automatically retries the
+login without it, stores a session with no refresh token, and reports
+`YotoSessionExpired` when the access token lapses so you can sign in again.
 
 Copy the issued client identifier into this one-line setup command. No `.env`
 file and no exported shell variable are required:
@@ -67,7 +71,7 @@ interface, validates OAuth state and PKCE, exchanges the one-time code, and
 stores the resulting rotating refresh token with mode `0600` permissions.
 
 The provider requests only `user:content:view`, `family:library:view`, and
-`offline_access`. It does not request profile data, content-edit,
+`offline_access` (dropping `offline_access` when Yoto has not approved it). It does not request profile data, content-edit,
 family-library-manage, device-management, media-upload, or icon-upload scopes.
 
 ### Development checkout

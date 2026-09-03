@@ -12,13 +12,33 @@ pub const Config = struct {
     /// Public-client identifier issued at https://dashboard.yoto.dev/.
     client_id: []const u8,
     redirect_uri: []const u8 = recommended_loopback_redirect,
-    scopes: []const u8 = "user:content:view family:library:view offline_access",
+    scopes: []const u8 = default_scopes,
+    /// Send `prompt=login` so a stale developer-dashboard session is never
+    /// reused silently. Disabled for an immediate retry right after the user
+    /// has just signed in.
+    force_login: bool = true,
+
+    pub const default_scopes = "user:content:view family:library:view offline_access";
+    /// Used when Yoto has not approved `offline_access` for this application.
+    /// Tokens then expire without a refresh token and the user signs in again.
+    pub const scopes_without_offline_access = "user:content:view family:library:view";
 
     pub fn validate(self: Config) !void {
         if (self.client_id.len == 0) return error.MissingClientId;
         if (!std.mem.startsWith(u8, self.redirect_uri, "http://127.0.0.1:")) return error.NonLoopbackRedirect;
         if (!std.mem.endsWith(u8, self.redirect_uri, "/callback")) return error.InvalidRedirectPath;
-        if (!containsScope(self.scopes, "offline_access")) return error.MissingOfflineAccessScope;
+        if (self.scopes.len == 0) return error.MissingScopes;
+    }
+
+    pub fn requestsOfflineAccess(self: Config) bool {
+        return containsScope(self.scopes, "offline_access");
+    }
+
+    pub fn withoutOfflineAccess(self: Config) Config {
+        var copy = self;
+        copy.scopes = scopes_without_offline_access;
+        copy.force_login = false;
+        return copy;
     }
 };
 
@@ -103,7 +123,7 @@ pub fn buildAuthorizationUrl(allocator: std.mem.Allocator, config: Config, pendi
     // A developer may be signed into the dashboard with an account that does
     // not own the Yoto family being connected. Never silently reuse that
     // browser session, especially when connecting multiple accounts.
-    try appendQueryField(&output.writer, &first, "prompt", "login");
+    if (config.force_login) try appendQueryField(&output.writer, &first, "prompt", "login");
     return output.toOwnedSlice();
 }
 
@@ -251,8 +271,10 @@ pub fn parseTokenResponse(allocator: std.mem.Allocator, body: []const u8, now: i
     if (body.len == 0 or body.len > max_credential_bytes) return error.InvalidTokenResponse;
     const parsed = std.json.parseFromSlice(WireTokenSet, allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch return error.InvalidTokenResponse;
     defer parsed.deinit();
-    const refresh_token = parsed.value.refresh_token orelse return error.MissingRotatedRefreshToken;
-    if (parsed.value.access_token.len == 0 or refresh_token.len == 0 or parsed.value.expires_in == 0 or parsed.value.expires_in > 86_400) return error.InvalidTokenResponse;
+    // Without the offline_access scope Yoto issues no refresh token; the
+    // session then simply expires and the user signs in again.
+    const refresh_token = parsed.value.refresh_token orelse "";
+    if (parsed.value.access_token.len == 0 or parsed.value.expires_in == 0 or parsed.value.expires_in > 86_400) return error.InvalidTokenResponse;
     if (!std.ascii.eqlIgnoreCase(parsed.value.token_type, "Bearer")) return error.UnsupportedTokenType;
     const expires_at = parsed.value.expires_at orelse now + @as(i64, parsed.value.expires_in);
     if (expires_at <= now) return error.InvalidTokenResponse;
@@ -388,7 +410,7 @@ pub fn loadCredentials(allocator: std.mem.Allocator, io: std.Io, path: []const u
         allocator.free(bytes);
     }
     const parsed = std.json.parseFromSlice(StoredCredentials, allocator, bytes, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch return error.InvalidCredentialFile;
-    if (parsed.value.version != 1 or parsed.value.client_id.len == 0 or parsed.value.access_token.len == 0 or parsed.value.refresh_token.len == 0) {
+    if (parsed.value.version != 1 or parsed.value.client_id.len == 0 or parsed.value.access_token.len == 0) {
         var invalid = parsed;
         invalid.deinit();
         return error.InvalidCredentialFile;
@@ -409,6 +431,14 @@ test "PKCE challenge and authorization URL use S256 and encoded public-client fi
     try std.testing.expect(std.mem.indexOf(u8, url, "offline_access") != null);
     try std.testing.expect(std.mem.indexOf(u8, url, "profile") == null);
     try std.testing.expect(std.mem.indexOf(u8, url, "prompt=login") != null);
+
+    const fallback: Config = (Config{ .client_id = "public client" }).withoutOfflineAccess();
+    try std.testing.expect(!fallback.requestsOfflineAccess());
+    const retry_url = try buildAuthorizationUrl(std.testing.allocator, fallback, pending);
+    defer std.testing.allocator.free(retry_url);
+    try std.testing.expect(std.mem.indexOf(u8, retry_url, "offline_access") == null);
+    try std.testing.expect(std.mem.indexOf(u8, retry_url, "prompt=") == null);
+    try std.testing.expect(std.mem.indexOf(u8, retry_url, "scope=user%3Acontent%3Aview+family%3Alibrary%3Aview&") != null);
 }
 
 test "loopback callback requires exact state and handles percent encoding" {
@@ -433,16 +463,19 @@ test "loopback callback surfaces the server's error_description" {
     try std.testing.expect(none == null);
 }
 
-test "token parsing requires a rotated refresh token" {
+test "token parsing tolerates a missing refresh token" {
     var tokens = try parseTokenResponse(std.testing.allocator,
         \\{"access_token":"synthetic-access","refresh_token":"synthetic-rotated","token_type":"Bearer","scope":"offline_access","expires_in":3600}
     , 1_000);
     defer tokens.deinit();
     try std.testing.expectEqualStrings("synthetic-rotated", tokens.refresh_token);
     try std.testing.expectEqual(@as(i64, 4_600), tokens.expires_at);
-    try std.testing.expectError(error.MissingRotatedRefreshToken, parseTokenResponse(std.testing.allocator,
+    var short_lived = try parseTokenResponse(std.testing.allocator,
         \\{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}
-    , 1_000));
+    , 1_000);
+    defer short_lived.deinit();
+    try std.testing.expectEqualStrings("", short_lived.refresh_token);
+    try std.testing.expectError(error.MissingRefreshToken, refreshTokenBody(std.testing.allocator, .{ .client_id = "c" }, short_lived.refresh_token));
 }
 
 test "token request bodies are form encoded" {

@@ -698,6 +698,7 @@ pub fn main(init: std.process.Init) void {
             error.ProfileNotFound => "profile not found; open Settings or run `audible-zig quickstart`",
             error.ProfilePasswordRequired => "encrypted profile requires the secure terminal passphrase prompt",
             error.Unauthorized => "Audible rejected this session; reconnect the profile",
+            error.YotoSessionExpired => "YotoSessionExpired: the Yoto session expired and this application has no offline_access approval; run `audible-zig auth login --provider yoto --client-id YOUR_CLIENT_ID` again",
             error.ConfirmationRequired => "confirmation required; review the action and repeat with --yes",
             error.PasswordArgumentForbidden => "passwords are never accepted in argv; use the hidden prompt",
             error.CommandNotImplemented => "unknown command; run --help",
