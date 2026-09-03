@@ -242,6 +242,17 @@ export class AppController {
     else void this.playerCommand(command);
   }
 
+  setSpeed(value: number): void {
+    if (!Number.isFinite(value)) return;
+    const clamped = Math.round(Math.max(0.5, Math.min(3, value)) * 100) / 100;
+    void this.playerCommand("set-speed", { value: clamped });
+  }
+
+  setVolume(value: number): void {
+    if (!Number.isFinite(value)) return;
+    void this.playerCommand("set-volume", { value: Math.round(Math.max(0, Math.min(100, value))) });
+  }
+
   toggleHelp(): void {
     this.host.dispatch({ type: "help.toggle" });
   }

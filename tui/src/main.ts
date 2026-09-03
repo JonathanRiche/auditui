@@ -80,6 +80,12 @@ const viewOptions: AppViewOptions = {
   onPlayerCommand(command) {
     controller?.playerMouseCommand(command);
   },
+  onSetSpeed(value) {
+    controller?.setSpeed(value);
+  },
+  onSetVolume(value) {
+    controller?.setVolume(value);
+  },
   onRefresh() {
     controller?.refreshLibrary();
   },

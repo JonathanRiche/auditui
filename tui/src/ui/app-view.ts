@@ -88,9 +88,22 @@ export interface AppViewOptions {
   onPlayerCommand?(
     command: "toggle" | "seek-back" | "seek-forward" | "chapter-previous" | "chapter-next",
   ): void;
+  onSetSpeed?(value: number): void;
+  onSetVolume?(value: number): void;
   onRefresh?(): void;
   onToggleHelp?(): void;
   onBack?(): void;
+}
+
+const SPEED_PRESETS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5] as const;
+
+/** Next preset above (or below) the current speed; wraps around at the ends. */
+export function nextSpeedPreset(current: number, backwards = false): number {
+  if (backwards) {
+    const lower = [...SPEED_PRESETS].reverse().find((preset) => preset < current - 0.005);
+    return lower ?? 2.5;
+  }
+  return SPEED_PRESETS.find((preset) => preset > current + 0.005) ?? 0.75;
 }
 
 /** A retained OpenTUI view. State remains owned by the reducer/controller. */
@@ -124,6 +137,11 @@ export class AppView {
   private nowPlayingSettings: TextRenderable | null = null;
   private dockBarStart = 0;
   private dockBarWidth = 0;
+  // Cell ranges (relative to the progress row) of the speed and volume readouts.
+  private dockSpeedRange: [number, number] = [0, 0];
+  private dockVolumeRange: [number, number] = [0, 0];
+  private playerSpeed = 1;
+  private playerVolume = 100;
   private playerDuration = 0;
   private hasActivePlayer = false;
   private lastDragSeekAt = 0;
@@ -212,14 +230,14 @@ export class AppView {
     this.dockProgress = text(ctx, "dock-progress", "", {
       width: "100%",
       bg: palette.surface,
-      onMouseDown: (event) => this.seekFromMouse(event.x, true, event),
+      onMouseDown: (event) => this.dockProgressFromMouse(event.x, event),
       onMouseDrag: (event) => this.seekFromMouse(event.x, false, event),
-      onMouseDragEnd: (event) => this.seekFromMouse(event.x, true, event),
-      onMouseScroll: (event) => this.wheelSeek(event),
-      onMouseMove: (event) =>
-        ctx.setMousePointer(this.isOverDockBar(event.x) ? "crosshair" : "default"),
-      onMouseOver: (event) =>
-        ctx.setMousePointer(this.isOverDockBar(event.x) ? "crosshair" : "default"),
+      onMouseDragEnd: (event) => {
+        if (this.dockReadoutAt(event.x) === null) this.seekFromMouse(event.x, true, event);
+      },
+      onMouseScroll: (event) => this.dockWheel(event.x, event),
+      onMouseMove: (event) => ctx.setMousePointer(this.dockPointerFor(event.x)),
+      onMouseOver: (event) => ctx.setMousePointer(this.dockPointerFor(event.x)),
       onMouseOut: () => ctx.setMousePointer("default"),
     });
     this.dockHelp = text(ctx, "dock-help", "", {
@@ -498,6 +516,13 @@ export class AppView {
     this.dockBarStart = elapsed.length + 2;
     this.dockBarWidth = barWidth;
     this.playerDuration = player.durationSeconds;
+    this.playerSpeed = player.speed;
+    this.playerVolume = player.volume;
+    const speedText = `${player.speed.toFixed(2)}×`;
+    const speedStart = this.dockBarStart + barWidth + 2 + total.length + 3;
+    this.dockSpeedRange = [speedStart, speedStart + speedText.length];
+    const volumeStart = speedStart + speedText.length + 2;
+    this.dockVolumeRange = [volumeStart, volumeStart + `vol ${player.volume}%`.length];
     this.dockProgress.content = concat(
       t`${fg(palette.muted)(elapsed)}  `,
       progress(player.positionSeconds, player.durationSeconds, barWidth),
@@ -505,7 +530,7 @@ export class AppView {
     );
     const mouseHelp =
       state.width >= 120
-        ? "    mouse: ▶ play/pause · title opens player · bar click/drag/wheel seeks"
+        ? "    mouse: ▶ play/pause · title opens player · bar seeks · speed/vol click/wheel"
         : state.width >= 92
           ? "    mouse: play/pause · seek"
           : "";
@@ -528,6 +553,58 @@ export class AppView {
   /** Screen geometry of the dock timeline; used by tests and hit-testing. */
   timelineGeometry(): { start: number; width: number } {
     return { start: this.dockProgress.screenX + this.dockBarStart, width: this.dockBarWidth };
+  }
+
+  /** Which readout (if any) a progress-row cell belongs to. */
+  private dockReadoutAt(x: number): "speed" | "volume" | null {
+    const relative = x - this.dockProgress.screenX;
+    if (relative >= this.dockSpeedRange[0] && relative < this.dockSpeedRange[1]) return "speed";
+    if (relative >= this.dockVolumeRange[0] && relative < this.dockVolumeRange[1]) return "volume";
+    return null;
+  }
+
+  private dockPointerFor(x: number): "pointer" | "crosshair" | "default" {
+    if (!this.hasActivePlayer) return "default";
+    if (this.dockReadoutAt(x) !== null) return "pointer";
+    return this.isOverDockBar(x) ? "crosshair" : "default";
+  }
+
+  private dockProgressFromMouse(
+    x: number,
+    event: { button: number; preventDefault(): void; stopPropagation(): void },
+  ): void {
+    const readout = this.dockReadoutAt(x);
+    if (readout === null) {
+      this.seekFromMouse(x, true, event);
+      return;
+    }
+    if (!this.hasActivePlayer) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Left click steps to the next preset, right click to the previous one.
+    const backwards = event.button === 2;
+    if (readout === "speed")
+      this.options.onSetSpeed?.(nextSpeedPreset(this.playerSpeed, backwards));
+    else this.options.onSetVolume?.(this.playerVolume + (backwards ? -10 : 10));
+  }
+
+  private dockWheel(
+    x: number,
+    event: { scroll?: { direction: string }; preventDefault(): void; stopPropagation(): void },
+  ): void {
+    if (!this.hasActivePlayer || !event.scroll) return;
+    const direction = event.scroll.direction;
+    if (direction !== "up" && direction !== "down") return;
+    const readout = this.dockReadoutAt(x);
+    if (readout === null) {
+      this.wheelSeek(event);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const sign = direction === "up" ? 1 : -1;
+    if (readout === "speed") this.options.onSetSpeed?.(this.playerSpeed + sign * 0.05);
+    else this.options.onSetVolume?.(this.playerVolume + sign * 5);
   }
 
   private isOverDockBar(x: number): boolean {
@@ -1628,6 +1705,51 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
     controls.add(this.playerControl("now-playing-forward", "+10s", 9, "seek-forward"));
     controls.add(this.playerControl("now-playing-next", "[ next ]", 12, "chapter-next"));
     details.add(controls);
+    const speedRow = new BoxRenderable(this.ctx, {
+      id: "now-playing-speeds",
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      justifyContent: "center",
+      backgroundColor: palette.surface,
+    });
+    speedRow.add(
+      text(this.ctx, "now-playing-speed-label", t`${fg(palette.muted)("speed")}`, {
+        width: 7,
+        bg: palette.surface,
+      }),
+    );
+    for (const preset of SPEED_PRESETS) {
+      const active = Math.abs(player.speed - preset) < 0.005;
+      const label = `${preset.toFixed(2).replace(/0$/, "")}×`;
+      const cell = text(
+        this.ctx,
+        `now-playing-speed-${preset}`,
+        active
+          ? t`${bold(fg(palette.accent)(`[${label}]`))}`
+          : t`${fg(palette.muted)(` ${label} `)}`,
+        {
+          width: label.length + 3,
+          bg: palette.surface,
+          onMouseDown: (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.options.onSetSpeed?.(preset);
+          },
+        },
+      );
+      cell.onMouseOver = () => {
+        cell.bg = palette.surfaceRaised;
+        this.ctx.setMousePointer("pointer");
+      };
+      cell.onMouseOut = () => {
+        cell.bg = palette.surface;
+        this.ctx.setMousePointer("default");
+      };
+      speedRow.add(cell);
+    }
+    details.add(speedRow);
     this.nowPlayingSettings = text(
       this.ctx,
       "now-playing-settings",

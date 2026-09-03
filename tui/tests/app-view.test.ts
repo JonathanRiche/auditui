@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createMockMouse, createTestRenderer, MouseButtons } from "@opentui/core/testing";
 import { initialState, reducer } from "../src/app/state";
-import { AppView } from "../src/ui/app-view";
+import { AppView, nextSpeedPreset } from "../src/ui/app-view";
 
 const renderers: Array<{ destroy(): void }> = [];
 afterEach(() => {
@@ -284,6 +284,8 @@ describe("retained app view", () => {
     renderers.push(setup.renderer);
     const seeks: number[] = [];
     const navigations: string[] = [];
+    const speeds: number[] = [];
+    const volumes: number[] = [];
     let toggles = 0;
     const view = new AppView(setup.renderer, {
       imageProtocol: "blocks",
@@ -293,6 +295,12 @@ describe("retained app view", () => {
       },
       onTogglePlayback() {
         toggles += 1;
+      },
+      onSetSpeed(value) {
+        speeds.push(value);
+      },
+      onSetVolume(value) {
+        volumes.push(value);
       },
       onNavigate(screen) {
         navigations.push(screen);
@@ -356,6 +364,17 @@ describe("retained app view", () => {
       MouseButtons.LEFT,
     );
     expect(seeks.at(-1)).toBe(95);
+
+    // The speed readout is a control: left click steps up a preset, right click down.
+    // Row: "0:00  " + bar + "  1:40   1.00×  vol 100%"
+    const speedX = barStart + barWidth + 2 + 4 + 3;
+    const seeksBeforeReadout = seeks.length;
+    await mouse.click(speedX, timeline.screenY, MouseButtons.LEFT);
+    await mouse.click(speedX + 4, timeline.screenY, MouseButtons.RIGHT);
+    expect(speeds).toEqual([1.25, 0.75]);
+    await mouse.click(speedX + 5 + 2, timeline.screenY, MouseButtons.LEFT);
+    expect(volumes).toEqual([110]);
+    expect(seeks.length).toBe(seeksBeforeReadout);
 
     // Clicking the title text (not the glyph) opens the player screen.
     await mouse.click(title.screenX + 8, title.screenY, MouseButtons.LEFT);
@@ -698,5 +717,16 @@ describe("retained app view", () => {
     expect(view.root.findDescendantById("section-Your library-window")).toBeDefined();
     expect(view.root.findDescendantById("book-large-59")).toBeDefined();
     expect(view.root.findDescendantById("book-large-60")).toBeUndefined();
+  });
+});
+
+describe("speed presets", () => {
+  test("step through presets in both directions and wrap", () => {
+    expect(nextSpeedPreset(1)).toBe(1.25);
+    expect(nextSpeedPreset(1.1)).toBe(1.25);
+    expect(nextSpeedPreset(2.5)).toBe(0.75);
+    expect(nextSpeedPreset(1, true)).toBe(0.75);
+    expect(nextSpeedPreset(0.75, true)).toBe(2.5);
+    expect(nextSpeedPreset(1.45, true)).toBe(1.25);
   });
 });
