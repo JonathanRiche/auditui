@@ -1,0 +1,177 @@
+[tools]
+zig = "0.16.0"
+bun = "1.4.0"
+
+[env]
+AUDIBLE_TUI_ROOT = "{{config_root}}"
+
+[tasks."zig:fmt"]
+description = "Format and verify the Zig engine"
+dir = "engine"
+run = "zig fmt --check build.zig build.zig.zon src"
+
+[tasks."zig:test"]
+description = "Run all Zig engine tests"
+dir = "engine"
+run = "zig build test"
+
+[tasks."zig:build"]
+description = "Build the native engine"
+dir = "engine"
+run = "zig build"
+
+[tasks."zig:build-release"]
+description = "Build the native engine with release-safe checks"
+dir = "engine"
+run = "zig build -Doptimize=ReleaseSafe"
+
+[tasks."tui:install"]
+description = "Install exact TUI dependencies"
+dir = "tui"
+run = "bun install --frozen-lockfile"
+
+[tasks."root:install"]
+description = "Install exact root integration-test dependencies"
+run = "bun install --frozen-lockfile"
+
+[tasks.install]
+description = "Install every exact locked development dependency"
+depends = ["root:install", "tui:install"]
+
+[tasks."ts:format"]
+description = "Verify TypeScript formatting with pinned Biome"
+depends = ["root:install"]
+run = "bun run format:check"
+
+[tasks."ts:lint"]
+description = "Lint TypeScript with pinned Biome"
+depends = ["root:install"]
+run = "bun run lint"
+
+[tasks."tui:check"]
+description = "Type-check the OpenTUI client"
+dir = "tui"
+run = "bun run typecheck"
+
+[tasks."tui:test"]
+description = "Run TUI unit and contract tests"
+dir = "tui"
+run = "bun test"
+
+[tasks."tui:run"]
+description = "Internal OpenTUI process used by the launchers"
+depends = ["zig:build"]
+dir = "tui"
+env.AUDIBLE_ENGINE = "../engine/zig-out/bin/audible-zig"
+# OpenTUI 0.5.x otherwise wraps Kitty image placeholder cells in OSC 66 on
+# Ghostty/Kitty, which leaves the image rectangle blank (upstream issue #1300).
+env.OPENTUI_FORCE_EXPLICIT_WIDTH = "false"
+run = "bun run start"
+
+[tasks."tui:start"]
+description = "Run Auditui in the current terminal with automatic high-resolution artwork"
+run = "mise run tui:run"
+
+[tasks."tui:start-safe"]
+description = "Run Auditui in the current terminal with portable block artwork"
+run = "env AUDIBLE_TUI_IMAGE_PROTOCOL=blocks mise run tui:run"
+
+[tasks."tui:start-native"]
+description = "Compatibility alias for tui:start"
+run = "mise run tui:start"
+
+[tasks."account:connect"]
+description = "Connect the default Audible account using native Zig browser authentication"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig quickstart --profile default --country-code us"
+
+[tasks."account:connect-unencrypted"]
+description = "Connect the default account without an auth-file passphrase (mode 0600 plaintext)"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig quickstart --profile default --country-code us --no-encryption"
+
+[tasks."library:refresh"]
+description = "Securely refresh the default account's owned-library cache"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig library refresh --profile default"
+
+[tasks.test]
+description = "Run the complete offline quality gate"
+depends = ["zig:fmt", "zig:test", "ts:format", "ts:lint", "tui:check", "tui:test", "protocol:test", "compat:test", "compat:manifest", "security:secrets", "license:check"]
+
+[tasks."protocol:test"]
+description = "Validate protocol JSON schemas and fixtures"
+depends = ["root:install"]
+run = "bun integration-tests/validate-protocol.ts"
+
+[tasks."compat:test"]
+description = "Differentially verify the supported human CLI contract"
+depends = ["zig:build", "root:install"]
+env.AUDIBLE_ENGINE = "engine/zig-out/bin/audible-zig"
+run = "bun test integration-tests/cli-compat.test.ts"
+
+[tasks."compat:manifest"]
+description = "Validate compatibility schema, release statuses, rationales, and evidence paths"
+depends = ["root:install"]
+run = "bun integration-tests/validate-compatibility.ts"
+
+[tasks.smoke]
+description = "Exercise the built Zig RPC engine through Bun"
+depends = ["zig:build"]
+env.AUDIBLE_ENGINE = "engine/zig-out/bin/audible-zig"
+run = "bun integration-tests/rpc-smoke.ts"
+
+[tasks."rpc:e2e"]
+description = "Exercise resumable downloads and real mpv control through engine RPC"
+depends = ["zig:build"]
+env.AUDIBLE_ENGINE = "engine/zig-out/bin/audible-zig"
+run = [
+  "bun integration-tests/download-rpc-e2e.ts",
+  "bun integration-tests/download-cancel-retry-e2e.ts",
+  "bun integration-tests/player-rpc-e2e.ts",
+]
+
+[tasks."playback:smoke"]
+description = "Exercise real mpv playback and JSON IPC with a synthetic tone"
+run = "bun integration-tests/mpv-ipc-smoke.ts"
+
+[tasks."terminal:smoke"]
+description = "Exercise startup, 80x24 layout, keyboard shutdown, and portable artwork in a generic PTY"
+depends = ["zig:build", "tui:install"]
+run = "integration-tests/terminal-smoke.sh"
+
+[tasks."security:secrets"]
+description = "Reject credentials, private keys, account media, and databases in source/release inputs"
+depends = ["root:install"]
+run = "bun scripts/secret-scan.ts"
+
+[tasks."license:check"]
+description = "Verify installed JavaScript packages declare reviewed licenses"
+depends = ["install"]
+run = "bun integration-tests/license-check.ts"
+
+[tasks."install:clean-check"]
+description = "Install both lockfiles from empty dependency directories"
+depends = ["root:install"]
+run = "scripts/clean-install-check.sh"
+
+[tasks."release:package"]
+description = "Build a release-safe Linux binary archive with deterministic metadata and a SHA-256 sidecar"
+depends = ["install"]
+run = "scripts/release-package.sh"
+
+[tasks."release:verify"]
+description = "Verify checksum, contents, isolated install, and packaged engine startup"
+depends = ["release:package"]
+run = "scripts/verify-release.sh"
+
+[tasks."release:check"]
+description = "Run all automated release, E2E, security, license, package, and clean-install gates"
+run = [
+  "mise run test",
+  "mise run rpc:e2e",
+  "mise run playback:smoke",
+  "mise run terminal:smoke",
+  "mise run install:clean-check",
+  "mise run release:verify",
+]

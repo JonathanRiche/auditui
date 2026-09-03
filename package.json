@@ -1,0 +1,15 @@
+{
+  "name": "auditui-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "check": "biome check ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "ajv": "8.17.1"
+  }
+}

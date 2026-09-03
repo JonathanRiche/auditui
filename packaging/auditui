@@ -1,0 +1,117 @@
+#!/bin/sh
+set -eu
+
+auditui_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+auditui_engine=${AUDITUI_ENGINE:-${AUDIBLE_ENGINE:-${auditui_bin_dir}/auditui-engine}}
+auditui_ui=${AUDITUI_UI:-${auditui_bin_dir}/auditui-ui}
+
+usage() {
+  cat <<'EOF'
+Auditui — your audiobook library in the terminal
+
+Usage:
+  auditui                         Open the terminal app
+  auditui auth login [OPTIONS]    Connect an Audible account in the browser
+  auditui auth status             Show local account profiles
+  auditui library refresh         Refresh the active provider library
+  auditui doctor                  Check required runtime components
+  auditui cli COMMAND ...         Run the native provider CLI
+  auditui --version               Show the installed version
+  auditui --help                  Show this help
+
+Auth options:
+  --profile NAME                  Local profile name (default: default)
+  --country-code CC               Audible marketplace (default: us)
+  --no-encryption                 Use a private 0600 file without a passphrase
+EOF
+}
+
+command=${1:-app}
+case "$command" in
+  app)
+    shift || true
+    exec "$auditui_ui" "$@"
+    ;;
+  auth)
+    subcommand=${2:-}
+    case "$subcommand" in
+      login)
+        shift 2
+        auditui_profile=${AUDITUI_PROFILE:-default}
+        auditui_country=${AUDITUI_COUNTRY_CODE:-us}
+        auditui_no_encryption=0
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --profile|-P)
+              [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --profile requires a value' >&2; exit 2; }
+              auditui_profile=$2
+              shift 2
+              ;;
+            --country-code|-cc)
+              [ "$#" -ge 2 ] || { printf '%s\n' 'auditui: --country-code requires a value' >&2; exit 2; }
+              auditui_country=$2
+              shift 2
+              ;;
+            --no-encryption)
+              auditui_no_encryption=1
+              shift
+              ;;
+            --help|-h)
+              usage
+              exit 0
+              ;;
+            *)
+              printf 'auditui: unknown auth option: %s\n' "$1" >&2
+              exit 2
+              ;;
+          esac
+        done
+        if [ "$auditui_no_encryption" -eq 1 ]; then
+          exec "$auditui_engine" quickstart --profile "$auditui_profile" --country-code "$auditui_country" --no-encryption
+        fi
+        exec "$auditui_engine" quickstart --profile "$auditui_profile" --country-code "$auditui_country"
+        ;;
+      status)
+        exec "$auditui_engine" manage profile status
+        ;;
+      *)
+        printf '%s\n' 'Usage: auditui auth login [OPTIONS] | auditui auth status' >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  library)
+    shift
+    [ "$#" -gt 0 ] || set -- list
+    exec "$auditui_engine" library "$@"
+    ;;
+  doctor)
+    "$auditui_engine" internal health
+    auditui_missing=0
+    for auditui_dependency in mpv sqlite3; do
+      if command -v "$auditui_dependency" >/dev/null 2>&1; then
+        printf 'ok: %s\n' "$auditui_dependency"
+      else
+        printf 'missing: %s\n' "$auditui_dependency" >&2
+        auditui_missing=1
+      fi
+    done
+    exit "$auditui_missing"
+    ;;
+  cli)
+    shift
+    exec "$auditui_engine" "$@"
+    ;;
+  --version|-V)
+    auditui_engine_version=$("$auditui_engine" --version)
+    printf 'Auditui %s\n' "${auditui_engine_version##* }"
+    ;;
+  --help|-h|help)
+    usage
+    ;;
+  *)
+    printf 'auditui: unknown command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

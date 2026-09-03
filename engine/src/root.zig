@@ -1,0 +1,45 @@
+pub const paths = @import("storage/paths.zig");
+pub const database = @import("storage/database.zig");
+pub const profiles = @import("auth/profiles.zig");
+pub const session = @import("auth/session.zig");
+pub const external_auth = @import("auth/external.zig");
+pub const encrypted_profile = @import("auth/encrypted_profile.zig");
+pub const password_prompt = @import("auth/password_prompt.zig");
+pub const credentials = @import("auth/credentials.zig");
+pub const credential_store = @import("auth/credential_store.zig");
+pub const signing = @import("auth/signing.zig");
+pub const api_client = @import("api/client.zig");
+pub const api_sync = @import("api/sync.zig");
+pub const api_download = @import("api/download.zig");
+pub const api_account = @import("api/account.zig");
+pub const library = @import("api/library.zig");
+pub const downloads = @import("downloads/manager.zig");
+pub const download_jobs = @import("downloads/jobs.zig");
+pub const player = @import("player/mpv.zig");
+pub const rpc = @import("protocol/rpc.zig");
+pub const redact = @import("auth/redact.zig");
+pub const cli_support = @import("cli/support.zig");
+
+test {
+    _ = paths;
+    _ = database;
+    _ = profiles;
+    _ = session;
+    _ = external_auth;
+    _ = encrypted_profile;
+    _ = password_prompt;
+    _ = credentials;
+    _ = credential_store;
+    _ = signing;
+    _ = api_client;
+    _ = api_sync;
+    _ = api_download;
+    _ = api_account;
+    _ = library;
+    _ = downloads;
+    _ = download_jobs;
+    _ = player;
+    _ = rpc;
+    _ = redact;
+    _ = cli_support;
+}

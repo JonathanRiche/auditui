@@ -1,0 +1,26 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["manifestVersion","baseline","statusValues","commonExitBehavior","commands","additionalBehavior"],
+  "properties":{
+    "$schema":{"type":"string"},
+    "manifestVersion":{"const":1},
+    "baseline":{"type":"object","required":["project","version","commit","audibleLibraryVersion","audibleLibraryCommit"]},
+    "statusValues":{"type":"array","items":{"enum":["unimplemented","partial","compatible","intentional-deviation"]},"uniqueItems":true},
+    "commonExitBehavior":{"type":"object"},
+    "commands":{"type":"array","items":{"$ref":"#/$defs/entry"}},
+    "additionalBehavior":{"type":"array","items":{"$ref":"#/$defs/behavior"}}
+  },
+  "$defs":{
+    "status":{"enum":["unimplemented","partial","compatible","intentional-deviation"]},
+    "entry":{
+      "type":"object","required":["path","status","options","outputModes","verification"],
+      "properties":{"path":{"type":"string"},"status":{"$ref":"#/$defs/status"},"arguments":{"type":"array"},"options":{"type":"array"},"prompts":{"type":"string"},"outputModes":{"type":"array"},"verification":{"type":"string"},"reason":{"type":"string"}}
+    },
+    "behavior":{
+      "type":"object","required":["id","status","verification"],
+      "properties":{"id":{"type":"string"},"status":{"$ref":"#/$defs/status"},"verification":{"type":"string"},"reason":{"type":"string"}}
+    }
+  }
+}

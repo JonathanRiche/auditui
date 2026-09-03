@@ -1,0 +1,35 @@
+Auditui
+Copyright (C) 2026 Auditui contributors
+
+This program is free software licensed under the GNU Affero General Public
+License, version 3 only. See LICENSE.
+
+This project is a new Zig/TypeScript port that studies and reproduces behavior
+from these projects:
+
+  audible-cli 0.6.0
+  Copyright (C) mkb79 and audible-cli contributors
+  https://github.com/mkb79/audible-cli
+  Commit 274539eba80a63ddccb79a9ec4f59b2fe911e232
+  License: GNU Affero General Public License, version 3 only
+
+  audible 0.12.0
+  Copyright (C) mkb79 and audible contributors
+  https://github.com/mkb79/audible
+  Commit 97575861ff03528013b1c8a77e68a238ea456951
+  License: GNU Affero General Public License, version 3 only
+
+No Audible or Amazon trademark, logo, cover image, user credential, API
+response, purchased media, activation material, voucher, or other proprietary
+asset is included by this notice. Audible and Amazon are trademarks of their
+respective owners. This project is not affiliated with or endorsed by them.
+
+Modifications: the Python implementations are being replaced by a native Zig
+engine and a Bun/TypeScript OpenTUI client; a versioned NDJSON protocol, SQLite
+state, download recovery, and mpv supervision are added. See
+docs/upstream-baseline.md and docs/compatibility.md for the exact baseline and
+behavioral status.
+
+Before distributing a build or offering it as a network service, provide the
+complete corresponding source in the manner required by AGPL-3.0-only and
+perform the release license review described in docs/licensing.md.

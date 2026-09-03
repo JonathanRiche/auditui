@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audible-tui.invalid/protocol/v1/response.schema.json",
+  "title": "Auditui RPC response v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "id", "ok", "result"],
+      "properties": {
+        "v": { "const": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "ok": { "const": true },
+        "result": {}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "id", "ok", "error"],
+      "properties": {
+        "v": { "const": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "ok": { "const": false },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "INVALID_REQUEST",
+                "METHOD_NOT_FOUND",
+                "NOT_IMPLEMENTED",
+                "INTERACTIVE_REQUIRED",
+                "PASSWORD_REQUIRED",
+                "RATE_LIMITED",
+                "REAUTH_REQUIRED",
+                "UNSAFE_CREDENTIALS",
+                "INTERNAL"
+              ]
+            },
+            "message": { "type": "string" },
+            "details": {}
+          }
+        }
+      }
+    }
+  ]
+}

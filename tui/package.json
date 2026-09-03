@@ -1,0 +1,22 @@
+{
+  "name": "@auditui/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test"
+  },
+  "dependencies": {
+    "@opentui/core": "0.5.10"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "bun": "1.4.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "id": "synthetic-b001",
+      "asin": "B000SYNTH1",
+      "title": "The Clockwork Library",
+      "authors": ["Ada North"],
+      "narrators": ["Morgan Vale"],
+      "durationSeconds": 28800,
+      "positionSeconds": 7200,
+      "description": "Synthetic offline metadata for contract tests.",
+      "releaseDate": "2026-01-01",
+      "downloaded": false
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audible-tui.invalid/protocol/v1/event.schema.json",
+  "title": "Auditui RPC event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "event", "data"],
+  "properties": {
+    "v": { "const": 1 },
+    "event": {
+      "enum": [
+        "download.progress",
+        "download.state",
+        "player.state",
+        "engine.shutting-down"
+      ]
+    },
+    "data": { "type": "object" }
+  }
+}

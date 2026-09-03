@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://audible-tui.invalid/protocol/v1/message.schema.json",
+  "title": "Auditui RPC message v1",
+  "oneOf": [
+    { "$ref": "request.schema.json" },
+    { "$ref": "response.schema.json" },
+    { "$ref": "event.schema.json" }
+  ]
+}
