@@ -27,26 +27,28 @@ and register this exact redirect URL:
 http://127.0.0.1:8787/callback
 ```
 
-Set the issued client identifier for the current command, then connect:
+Copy the issued client identifier into this one-line setup command. No `.env`
+file and no exported shell variable are required:
 
 ```sh
-YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto
+auditui auth login --provider yoto --client-id YOUR_CLIENT_ID
 ```
 
-The option form is equivalent, and is useful for one command without exporting
-an environment variable:
+To connect a second account while keeping its library and playback state
+separate, add a memorable account name:
 
 ```sh
-auditui auth login --provider yoto --client-id your-public-client-id
+auditui auth login --provider yoto --client-id YOUR_CLIENT_ID --account kids-room
 ```
 
-Use `--account NAME` to keep multiple local Yoto accounts separate. Login
-immediately performs the first refresh. Later refreshes reuse the stored client
-ID and rotating refresh token, so `YOTO_CLIENT_ID` is not required again:
+Login immediately performs the first refresh. Auditui stores the public client
+ID with that account's private credentials, so later commands need neither the
+ID nor an environment variable:
 
 ```sh
 auditui library refresh --provider yoto --account default
 auditui library list --provider yoto --account default
+auditui
 ```
 
 The client identifier is public by design; no client secret is used or shipped.

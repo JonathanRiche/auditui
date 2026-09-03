@@ -24,7 +24,7 @@ Auth options:
   --profile NAME                  Local profile name (default: default)
   --account NAME                  Provider account name (Yoto; default: default)
   --country-code CC               Audible marketplace (default: us)
-  --client-id ID                  Yoto Public Client ID (or YOTO_CLIENT_ID)
+  --client-id ID                  Yoto Public Client ID; saved after first login
   --no-encryption                 Audible: private 0600 file, no passphrase
 
 Library refresh options:

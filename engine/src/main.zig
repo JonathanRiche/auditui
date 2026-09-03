@@ -714,7 +714,7 @@ pub fn main(init: std.process.Init) void {
             error.InvalidJsonBody => "InvalidJsonBody: --body must contain valid JSON",
             error.InvalidQueryParameter => "InvalidQueryParameter: each --param must be a single key=value without newlines",
             error.UnknownProvider => "unknown provider; choose audible or yoto",
-            error.YotoClientIdRequired => "Yoto requires a public client ID; set YOTO_CLIENT_ID or pass --client-id",
+            error.YotoClientIdRequired => "Yoto setup is one command: auditui auth login --provider yoto --client-id YOUR_CLIENT_ID",
             error.MissingOptionValue => "MissingOptionValue: an option is missing its value; run --help for usage",
             else => @errorName(err),
         };

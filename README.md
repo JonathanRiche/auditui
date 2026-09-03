@@ -43,19 +43,18 @@ passphrase prompts. Auditui requires `mpv` for playback and `sqlite3` for durabl
 non-secret state.
 
 To connect Yoto, first create a Public Client in the Yoto developer dashboard
-and register `http://127.0.0.1:8787/callback`. Then use either the environment
-variable or the equivalent option:
+and register `http://127.0.0.1:8787/callback`. Copy its client ID into this
+single command—no `.env` file or shell export is needed:
 
 ```sh
-YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto
-# or: auditui auth login --provider yoto --client-id your-public-client-id
-auditui library refresh --provider yoto
+auditui auth login --provider yoto --client-id YOUR_CLIENT_ID
 auditui
 ```
 
-The Yoto client ID is public configuration, not a secret. Yoto credentials are
-stored owner-only with mode `0600`; rotating refresh tokens are atomically
-replaced. See the [Yoto provider guide](docs/yoto-provider.md) for the supported
+That login command performs the first library refresh and stores the public
+client ID with the private account credentials. Future refreshes and launches
+do not need the ID again. For a second account, add `--account NAME` to the same
+command. See the [Yoto provider guide](docs/yoto-provider.md) for the supported
 content surface and current limitations.
 
 The installer downloads the release archive and checksum from GitHub Releases,

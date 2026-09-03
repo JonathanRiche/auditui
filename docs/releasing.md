@@ -33,7 +33,7 @@ Yoto users must create a dashboard Public Client and register
 `http://127.0.0.1:8787/callback` before running:
 
 ```sh
-YOTO_CLIENT_ID=your-public-client-id auditui auth login --provider yoto
+auditui auth login --provider yoto --client-id YOUR_CLIENT_ID
 ```
 
 The bootstrap script detects the supported platform, downloads both assets,

@@ -660,7 +660,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       if (!state.profileName)
         this.addEmpty(
           "Welcome to Auditui",
-          "No audiobook account was detected. Press a for Audible or y for Yoto sign-in.",
+          "No account found. Audible: press a. Yoto: run auditui auth login --provider yoto --client-id YOUR_CLIENT_ID once.",
         );
       else if (!state.profileSecure)
         this.addEmpty(
@@ -1207,7 +1207,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
       text(
         this.ctx,
         "settings-onboarding",
-        t`${fg(palette.muted)(state.profileName ? "Select an account and press Enter to use it." : "From Library, press a to connect Audible or y to connect Yoto.")}`,
+        t`${fg(palette.muted)(state.profileName ? "Select an account and press Enter to use it." : "Audible: press a. Yoto: run the one-line --provider yoto --client-id setup command.")}`,
         { width: "100%", bg: palette.surface },
       ),
     );
@@ -1223,7 +1223,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
     if (!state.profiles.length)
       return this.addEmpty(
         "No profiles found",
-        "Return to Library and press a for Audible or y for Yoto sign-in.",
+        "Audible: press a. Yoto: run auditui auth login --provider yoto --client-id YOUR_CLIENT_ID once.",
       );
     state.profiles.forEach((profile, index) => {
       const selected = index === state.selectedIndex;
