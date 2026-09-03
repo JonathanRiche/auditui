@@ -60,6 +60,24 @@ The provider requests only `user:content:view`, `family:library:view`,
 `offline_access`, and `profile`. It does not request content-edit,
 family-library-manage, device-management, media-upload, or icon-upload scopes.
 
+### Development checkout
+
+When running from source, Mise builds the Zig engine before each provider task.
+No `.env` file is involved:
+
+```sh
+mise install
+mise run install
+mise run yoto:connect -- --client-id YOUR_CLIENT_ID
+mise run yoto:refresh
+mise run yoto:list
+mise run tui:start
+```
+
+For a named account, pass the same name after the task separator, for example
+`mise run yoto:connect -- --client-id YOUR_CLIENT_ID --account kids-room` and
+`mise run yoto:refresh -- --account kids-room`.
+
 ## Library limits
 
 Yoto's documented `/content/mine` operation returns the authenticated user's

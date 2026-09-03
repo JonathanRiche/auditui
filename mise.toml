@@ -97,6 +97,21 @@ description = "Securely refresh the default account's owned-library cache"
 depends = ["zig:build"]
 run = "engine/zig-out/bin/audible-zig library refresh --profile default"
 
+[tasks."yoto:connect"]
+description = "Connect a Yoto account (pass --client-id and optional --account after --)"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig auth login --provider yoto"
+
+[tasks."yoto:refresh"]
+description = "Refresh a Yoto account library (pass optional --account after --)"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig library refresh --provider yoto"
+
+[tasks."yoto:list"]
+description = "List a Yoto account library (pass optional --account after --)"
+depends = ["zig:build"]
+run = "engine/zig-out/bin/audible-zig library list --provider yoto"
+
 [tasks.test]
 description = "Run the complete offline quality gate"
 depends = ["zig:fmt", "zig:test", "ts:format", "ts:lint", "tui:check", "tui:test", "protocol:test", "compat:test", "compat:manifest", "security:secrets", "license:check"]

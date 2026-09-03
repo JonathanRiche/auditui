@@ -79,6 +79,21 @@ Development uses [mise](https://mise.jdx.dev/) to install the pinned Zig and Bun
 versions. Run `mise run release:check` before publishing. See the
 [release guide](docs/releasing.md) for the tag-driven workflow.
 
+For Yoto development, create a dashboard Public Client with
+`http://127.0.0.1:8787/callback`, then use the matching Mise tasks. Arguments
+after `--` are passed to the native Zig CLI:
+
+```sh
+mise run yoto:connect -- --client-id YOUR_CLIENT_ID
+mise run yoto:refresh
+mise run yoto:list
+mise run tui:start
+```
+
+For a named account, append `--account kids-room` to each Yoto command. The
+client ID is needed only by `yoto:connect`; Auditui stores it for subsequent
+refreshes.
+
 Connect an Audible account in the external browser, then populate the local
 library cache. The default encrypted profile asks for its passphrase in both
 commands:
