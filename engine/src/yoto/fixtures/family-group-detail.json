@@ -1,0 +1,55 @@
+{
+  "id": "group-1",
+  "familyId": "family-1",
+  "name": "Auditui",
+  "imageId": "fp-cards",
+  "imageUrl": "https://cdn.yoto.io/library/groups/fp-cards.png",
+  "createdAt": "2026-09-03T15:40:00.000Z",
+  "lastModifiedAt": "2026-09-03T15:41:00.000Z",
+  "items": [
+    { "contentId": "04kgK", "addedAt": "2026-09-03T15:40:10.000Z" },
+    { "contentId": "dqQgk", "addedAt": "2026-09-03T15:40:20.000Z" }
+  ],
+  "cards": [
+    {
+      "cardId": "04kgK",
+      "title": "Marvel: 5-Minute Spidey and his Amazing Friends Stories",
+      "slug": "marvel-5-minute-spidey",
+      "userId": "yoto",
+      "createdAt": "2025-01-30T09:14:48.586Z",
+      "updatedAt": "2025-11-10T12:11:14.358Z",
+      "metadata": {
+        "author": "Marvel Press",
+        "authors": ["Marvel Press"],
+        "narrators": ["Nezar Alderazi"],
+        "category": "stories",
+        "description": "Synthetic description.",
+        "cover": { "imageL": "https://card-content.yotoplay.com/yoto/pub/synthetic-cover" },
+        "media": { "duration": 4037, "fileSize": 65280270, "hasStreams": false }
+      },
+      "content": {
+        "activity": "yoto_Player",
+        "version": "1",
+        "chapters": [
+          {
+            "key": "7",
+            "title": "Introduction",
+            "duration": 22,
+            "fileSize": 361714,
+            "hasStreams": false,
+            "tracks": [
+              { "key": "7", "title": "Introduction", "format": "aac", "type": "audio", "trackUrl": "yoto:#synthetic-track-hash" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "cardId": "dqQgk",
+      "title": "Dada Test",
+      "createdAt": "2026-08-01T00:00:00.000Z",
+      "metadata": { "media": { "duration": 7 } },
+      "content": { "chapters": [] }
+    }
+  ]
+}

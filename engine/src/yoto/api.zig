@@ -14,6 +14,8 @@ pub const Media = struct {
 };
 pub const Metadata = struct {
     author: ?[]const u8 = null,
+    authors: []const []const u8 = &.{},
+    narrators: []const []const u8 = &.{},
     category: ?[]const u8 = null,
     description: ?[]const u8 = null,
     cover: Cover = .{},
@@ -87,6 +89,15 @@ pub const GroupsDocument = struct {
         self.parsed.deinit();
     }
 };
+/// One group fetched through the documented "get a group" operation. Unlike
+/// the list operation, Yoto expands every available item into `cards` here,
+/// which is the only documented way to read purchased cards' metadata.
+pub const GroupDocument = struct {
+    parsed: std.json.Parsed(FamilyGroup),
+    pub fn deinit(self: *GroupDocument) void {
+        self.parsed.deinit();
+    }
+};
 
 pub fn parseMine(allocator: std.mem.Allocator, body: []const u8) !MineDocument {
     if (body.len == 0 or body.len > max_api_response_bytes) return error.InvalidMineResponse;
@@ -108,6 +119,29 @@ pub fn parsePlayableContent(allocator: std.mem.Allocator, body: []const u8) !Con
         return error.InvalidContentResponse;
     }
     return .{ .parsed = parsed };
+}
+
+pub fn parseFamilyGroup(allocator: std.mem.Allocator, body: []const u8) !GroupDocument {
+    if (body.len == 0 or body.len > max_api_response_bytes) return error.InvalidGroupResponse;
+    const parsed = std.json.parseFromSlice(FamilyGroup, allocator, body, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return error.InvalidGroupResponse;
+    if (parsed.value.id.len == 0) {
+        var invalid = parsed;
+        invalid.deinit();
+        return error.InvalidGroupResponse;
+    }
+    return .{ .parsed = parsed };
+}
+
+pub fn familyGroupUrl(allocator: std.mem.Allocator, group_id: []const u8) ![]u8 {
+    if (group_id.len == 0) return error.MissingGroupId;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try output.writer.writeAll(family_groups_url ++ "/");
+    try percentEncode(&output.writer, group_id);
+    return output.toOwnedSlice();
 }
 
 pub fn parseFamilyGroups(allocator: std.mem.Allocator, body: []const u8) !GroupsDocument {
@@ -179,7 +213,10 @@ pub fn fetchPlayableContent(allocator: std.mem.Allocator, io: std.Io, access_tok
     defer allocator.free(url);
     const response = try fetchAuthenticated(allocator, io, url, access_token);
     defer response.deinit(allocator);
-    if (response.status == 401 or response.status == 403) return error.Unauthorized;
+    if (response.status == 401) return error.Unauthorized;
+    // Yoto answers 403 for cards the token may not read (e.g. purchased cards
+    // when only MYO access is granted); callers skip these individually.
+    if (response.status == 403) return error.ContentForbidden;
     if (response.status == 404) return error.ContentNotFound;
     if (response.status < 200 or response.status >= 300) return error.ContentRequestFailed;
     return parsePlayableContent(allocator, response.body);
@@ -192,7 +229,10 @@ pub fn fetchContentMetadata(allocator: std.mem.Allocator, io: std.Io, access_tok
     defer allocator.free(url);
     const response = try fetchAuthenticated(allocator, io, url, access_token);
     defer response.deinit(allocator);
-    if (response.status == 401 or response.status == 403) return error.Unauthorized;
+    if (response.status == 401) return error.Unauthorized;
+    // Yoto answers 403 for cards the token may not read (e.g. purchased cards
+    // when only MYO access is granted); callers skip these individually.
+    if (response.status == 403) return error.ContentForbidden;
     if (response.status == 404) return error.ContentNotFound;
     if (response.status < 200 or response.status >= 300) return error.ContentRequestFailed;
     return parsePlayableContent(allocator, response.body);
@@ -204,6 +244,17 @@ pub fn fetchFamilyGroups(allocator: std.mem.Allocator, io: std.Io, access_token:
     if (response.status == 401 or response.status == 403) return error.Unauthorized;
     if (response.status < 200 or response.status >= 300) return error.GroupsRequestFailed;
     return parseFamilyGroups(allocator, response.body);
+}
+
+pub fn fetchFamilyGroup(allocator: std.mem.Allocator, io: std.Io, access_token: []const u8, group_id: []const u8) !GroupDocument {
+    const url = try familyGroupUrl(allocator, group_id);
+    defer allocator.free(url);
+    const response = try fetchAuthenticated(allocator, io, url, access_token);
+    defer response.deinit(allocator);
+    if (response.status == 401) return error.Unauthorized;
+    if (response.status == 403 or response.status == 404) return error.GroupNotFound;
+    if (response.status < 200 or response.status >= 300) return error.GroupRequestFailed;
+    return parseFamilyGroup(allocator, response.body);
 }
 
 test "content mine fixture parses documented card metadata without chapters" {
@@ -235,6 +286,25 @@ test "playable content fixture retains signed track URLs" {
     const track = document.parsed.value.card.content.chapters[0].tracks[0];
     try std.testing.expectEqualStrings("track-1", track.key);
     try std.testing.expect(std.mem.startsWith(u8, track.trackUrl.?, "https://signed.example/"));
+}
+
+test "single group fixture expands purchased cards with authors and narrators" {
+    var document = try parseFamilyGroup(std.testing.allocator, @embedFile("fixtures/family-group-detail.json"));
+    defer document.deinit();
+    const group = document.parsed.value;
+    try std.testing.expectEqualStrings("group-1", group.id);
+    try std.testing.expectEqual(@as(usize, 2), group.items.len);
+    try std.testing.expectEqual(@as(usize, 2), group.cards.len);
+    const card = group.cards[0];
+    try std.testing.expectEqualStrings("04kgK", card.cardId);
+    try std.testing.expectEqualStrings("Marvel Press", card.metadata.authors[0]);
+    try std.testing.expectEqualStrings("Nezar Alderazi", card.metadata.narrators[0]);
+    try std.testing.expectEqual(@as(f64, 4037), card.metadata.media.duration);
+    try std.testing.expectEqual(@as(usize, 1), card.content.chapters.len);
+    const url = try familyGroupUrl(std.testing.allocator, "group/1");
+    defer std.testing.allocator.free(url);
+    try std.testing.expectEqualStrings("https://api.yotoplay.com/card/family/library/groups/group%2F1", url);
+    try std.testing.expectError(error.InvalidGroupResponse, parseFamilyGroup(std.testing.allocator, "{}"));
 }
 
 test "family groups fixture parses items and expanded cards" {

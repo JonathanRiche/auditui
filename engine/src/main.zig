@@ -442,6 +442,7 @@ fn libraryRefreshCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.
         const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
         try writer.print("Refreshed {d} Yoto titles for account {s}.\n", .{ result.item_count, account });
         if (result.group_count == 0) try writer.print("{s}\n", .{engine.yoto.provider.no_groups_hint});
+        if (result.forbidden_count > 0) try writer.print("Skipped {d} group cards. {s}\n", .{ result.forbidden_count, engine.yoto.provider.forbidden_hint });
         return;
     }
     if (!std.mem.eql(u8, provider, "audible")) return error.UnknownProvider;
@@ -503,6 +504,7 @@ fn yotoLoginCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.proce
     const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
     try writer.print("Loaded {d} Yoto titles.\n", .{result.item_count});
     if (result.group_count == 0) try writer.print("{s}\n", .{engine.yoto.provider.no_groups_hint});
+    if (result.forbidden_count > 0) try writer.print("Skipped {d} group cards. {s}\n", .{ result.forbidden_count, engine.yoto.provider.forbidden_hint });
 }
 
 fn profileImport(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, source: []const u8, name: []const u8) !void {
@@ -700,7 +702,7 @@ pub fn main(init: std.process.Init) void {
         const message = switch (err) {
             error.ProfileNotFound => "profile not found; open Settings or run `audible-zig quickstart`",
             error.ProfilePasswordRequired => "encrypted profile requires the secure terminal passphrase prompt",
-            error.Unauthorized => "Audible rejected this session; reconnect the profile",
+            error.Unauthorized => "Unauthorized: the provider rejected this session; reconnect the account (Audible: reconnect the profile; Yoto: run `auth login --provider yoto` again)",
             error.YotoSessionExpired => "YotoSessionExpired: the Yoto session expired and this application has no offline_access approval; run `audible-zig auth login --provider yoto --client-id YOUR_CLIENT_ID` again",
             error.ConfirmationRequired => "confirmation required; review the action and repeat with --yes",
             error.PasswordArgumentForbidden => "passwords are never accepted in argv; use the hidden prompt",

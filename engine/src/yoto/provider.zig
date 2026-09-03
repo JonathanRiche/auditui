@@ -7,7 +7,10 @@ const api = @import("api.zig");
 
 pub const id = "yoto";
 
-pub const RefreshResult = struct { item_count: usize, group_count: usize, token_refreshed: bool };
+pub const RefreshResult = struct { item_count: usize, group_count: usize, forbidden_count: usize, token_refreshed: bool };
+
+pub const forbidden_hint =
+    "Yoto returned \"forbidden\" for these group cards, so their details could not be read with the granted scopes; only Make Your Own cards and cards Yoto expands inside groups are available.";
 
 /// Yoto's public API exposes purchased cards only through Library groups.
 pub const no_groups_hint =
@@ -89,7 +92,7 @@ pub fn deinitAccounts(allocator: std.mem.Allocator, accounts: []Account) void {
 
 const offline_access_notice =
     "Yoto has not approved offline_access for this application, so Auditui is connecting without a refresh token. " ++
-    "A second sign-in tab has opened; approve it to finish. You will need to run this login again when the session expires (usually a few hours).";
+    "A second sign-in tab has opened; approve it to finish. You will need to run this login again when the session expires (about 24 hours).";
 
 pub fn connect(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8, client_id: []const u8, writer: *std.Io.Writer) !void {
     if (!validAccount(account)) return error.InvalidAccountName;
@@ -226,7 +229,7 @@ pub fn accessToken(allocator: std.mem.Allocator, io: std.Io, environ: std.proces
 
 fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8) !void {
     var author_storage: [1][]const u8 = undefined;
-    const authors: []const []const u8 = if (card.metadata.author) |author| blk: {
+    const authors: []const []const u8 = if (card.metadata.authors.len != 0) card.metadata.authors else if (card.metadata.author) |author| blk: {
         author_storage[0] = author;
         break :blk &author_storage;
     } else &.{};
@@ -237,7 +240,7 @@ fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8) !void 
         .account = account,
         .title = card.title,
         .authors = authors,
-        .narrators = &[_][]const u8{},
+        .narrators = card.metadata.narrators,
         .durationSeconds = card.metadata.media.duration,
         .positionSeconds = @as(f64, 0),
         .coverUrl = card.metadata.cover.imageL,
@@ -250,7 +253,7 @@ fn writeCard(writer: *std.Io.Writer, card: api.Card, account: []const u8) !void 
     }, .{}, writer);
 }
 
-fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8, account: []const u8, mine: *const api.MineDocument, groups: *const api.GroupsDocument, hydrated: []const api.ContentDocument) !usize {
+fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8, account: []const u8, mine: *const api.MineDocument, groups: []const api.GroupDocument, hydrated: []const api.ContentDocument) !usize {
     var output: std.Io.Writer.Allocating = .init(allocator);
     defer output.deinit();
     var seen: std.StringHashMapUnmanaged(void) = .empty;
@@ -264,7 +267,7 @@ fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         try writeCard(&output.writer, card, account);
         count += 1;
     }
-    for (groups.parsed.value) |group| for (group.cards) |card| {
+    for (groups) |group| for (group.parsed.value.cards) |card| {
         if (card.deleted or card.cardId.len == 0 or card.title.len == 0 or seen.contains(card.cardId)) continue;
         try seen.put(allocator, card.cardId, {});
         if (count != 0) try output.writer.writeByte(',');
@@ -289,8 +292,23 @@ pub fn refreshLibrary(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
     defer access.deinit();
     var mine = try api.fetchMine(allocator, io, access.token);
     defer mine.deinit();
-    var groups = try api.fetchFamilyGroups(allocator, io, access.token);
-    defer groups.deinit();
+    var group_list = try api.fetchFamilyGroups(allocator, io, access.token);
+    defer group_list.deinit();
+    // The list operation does not expand cards; the documented per-group
+    // operation does, and it is the only public way to read purchased cards.
+    var groups: std.ArrayList(api.GroupDocument) = .empty;
+    defer {
+        for (groups.items) |*document| document.deinit();
+        groups.deinit(allocator);
+    }
+    for (group_list.parsed.value) |summary| {
+        var detail = api.fetchFamilyGroup(allocator, io, access.token, summary.id) catch |err| switch (err) {
+            error.GroupNotFound => continue,
+            else => return err,
+        };
+        errdefer detail.deinit();
+        try groups.append(allocator, detail);
+    }
     var hydrated: std.ArrayList(api.ContentDocument) = .empty;
     defer {
         for (hydrated.items) |*document| document.deinit();
@@ -298,13 +316,19 @@ pub fn refreshLibrary(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
     }
     var known: std.StringHashMapUnmanaged(void) = .empty;
     defer known.deinit(allocator);
+    var forbidden_count: usize = 0;
     for (mine.parsed.value.cards) |card| if (card.cardId.len != 0) try known.put(allocator, card.cardId, {});
-    for (groups.parsed.value) |group| {
+    for (groups.items) |group_document| {
+        const group = group_document.parsed.value;
         for (group.cards) |card| if (card.cardId.len != 0) try known.put(allocator, card.cardId, {});
         for (group.items) |item| {
             if (item.contentId.len == 0 or known.contains(item.contentId)) continue;
             var document = api.fetchContentMetadata(allocator, io, access.token, item.contentId) catch |err| switch (err) {
                 error.ContentNotFound => continue,
+                error.ContentForbidden => {
+                    forbidden_count += 1;
+                    continue;
+                },
                 else => return err,
             };
             errdefer document.deinit();
@@ -314,7 +338,7 @@ pub fn refreshLibrary(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
     }
     const path = try cachePath(allocator, environ, account);
     defer allocator.free(path);
-    return .{ .item_count = try writeLibraryCache(allocator, io, path, account, &mine, &groups, hydrated.items), .group_count = groups.parsed.value.len, .token_refreshed = access.refreshed };
+    return .{ .item_count = try writeLibraryCache(allocator, io, path, account, &mine, groups.items, hydrated.items), .group_count = group_list.parsed.value.len, .forbidden_count = forbidden_count, .token_refreshed = access.refreshed };
 }
 
 pub fn loadCache(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8) !std.json.Parsed(library.Cache) {

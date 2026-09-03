@@ -66,7 +66,7 @@ URLs before applying for Yoto verification.
    - `offline_access`, if the dashboard offers it
 
 `offline_access` lets Yoto issue a refresh token so you do not have to sign in
-again every few hours. If your application has not been approved for it, Yoto
+again every day. If your application has not been approved for it, Yoto
 reports "scopes that have not been pre-approved: offline_access"; Auditui then
 automatically reconnects without it and asks you to sign in again when the
 session expires. Do not select either `manage` scope or `user:icons:manage`;
