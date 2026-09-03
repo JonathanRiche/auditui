@@ -176,6 +176,19 @@ pub fn playableContentUrl(allocator: std.mem.Allocator, content_id: []const u8, 
     return output.toOwnedSlice();
 }
 
+/// Card endpoint on the official API host. It is not listed in the public
+/// reference, but it is what resolves a family's purchased cards to signed
+/// playback URLs when the documented content operation answers 403. It is
+/// only ever called with the user's own token for cards in their library.
+pub fn cardUrl(allocator: std.mem.Allocator, card_id: []const u8) ![]u8 {
+    if (card_id.len == 0) return error.MissingContentId;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try output.writer.writeAll(api_origin ++ "/card/");
+    try percentEncode(&output.writer, card_id);
+    return output.toOwnedSlice();
+}
+
 pub fn contentMetadataUrl(allocator: std.mem.Allocator, content_id: []const u8) ![]u8 {
     if (content_id.len == 0) return error.MissingContentId;
     var output: std.Io.Writer.Allocating = .init(allocator);
@@ -224,6 +237,18 @@ pub fn fetchPlayableContent(allocator: std.mem.Allocator, io: std.Io, access_tok
 
 /// Fetches card metadata without requesting signed playable URLs. This is used
 /// to hydrate family-library references during refresh.
+pub fn fetchCard(allocator: std.mem.Allocator, io: std.Io, access_token: []const u8, card_id: []const u8) !ContentDocument {
+    const url = try cardUrl(allocator, card_id);
+    defer allocator.free(url);
+    const response = try fetchAuthenticated(allocator, io, url, access_token);
+    defer response.deinit(allocator);
+    if (response.status == 401) return error.Unauthorized;
+    if (response.status == 403) return error.ContentForbidden;
+    if (response.status == 404) return error.ContentNotFound;
+    if (response.status < 200 or response.status >= 300) return error.ContentRequestFailed;
+    return parsePlayableContent(allocator, response.body);
+}
+
 pub fn fetchContentMetadata(allocator: std.mem.Allocator, io: std.Io, access_token: []const u8, content_id: []const u8) !ContentDocument {
     const url = try contentMetadataUrl(allocator, content_id);
     defer allocator.free(url);
@@ -277,6 +302,9 @@ test "metadata content URL never requests signed playback" {
     const url = try contentMetadataUrl(std.testing.allocator, "card/id");
     defer std.testing.allocator.free(url);
     try std.testing.expectEqualStrings("https://api.yotoplay.com/content/card%2Fid", url);
+    const card = try cardUrl(std.testing.allocator, "card/id");
+    defer std.testing.allocator.free(card);
+    try std.testing.expectEqualStrings("https://api.yotoplay.com/card/card%2Fid", card);
     try std.testing.expect(std.mem.indexOf(u8, url, "playable") == null);
 }
 

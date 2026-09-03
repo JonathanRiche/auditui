@@ -2,8 +2,8 @@
 
 Auditui is a Linux-first terminal audiobook application with a native Zig engine
 and a Bun/OpenTUI interface. Audible provides the full offline workflow, while
-Yoto support uses Yoto's documented public API for MYO and family-group content
-behind the same library and player experience.
+Yoto support reads MYO and family-group content through Yoto's public API and
+streams it behind the same library and player experience.
 
 Its implemented application path includes native browser authentication,
 automatic library refresh, search, durable resumable AAXC downloads, cover and

@@ -807,5 +807,5 @@ test("unplayable messages explain the provider-specific reason", () => {
   );
   expect(
     unplayableMessage({ title: "Pup Pack: Skye", provider: "yoto", downloadable: false }),
-  ).toContain("only Make Your Own cards can be streamed");
+  ).toContain("did not provide playable audio");
 });

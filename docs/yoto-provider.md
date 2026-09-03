@@ -1,8 +1,11 @@
 # Yoto provider
 
-Auditui integrates with Yoto only through the documented public API. It does
-not scrape Yoto services, discover private endpoints, or retain signed media
-URLs beyond the request that starts playback.
+Auditui integrates with Yoto through Yoto's public API host, authenticated
+only with the user's own OAuth token. Library reads use documented operations.
+Playback of purchased cards uses one card operation on the same host that the
+public reference does not list (see "Playback" below). Auditui does not scrape
+Yoto services, bypass access controls, or retain signed media URLs beyond the
+request that starts playback.
 
 ## Supported surface
 
@@ -117,16 +120,13 @@ the CLI prints this reminder.
 Supported:
 
 - Read-only MYO and family-group library refreshes.
-- Metadata, covers, chapters, and documented signed S3 playback URLs.
-- Local streaming of Make Your Own cards through the existing mpv player.
+- Metadata, covers, chapters, and signed playback URLs.
+- Local streaming of Make Your Own cards and of purchased cards placed in a
+  Library group, through the existing mpv player.
 
 Not currently supported:
 
-- Enumerating all purchased commercial cards when they are not returned by an
-  official endpoint used above.
-- Streaming purchased commercial cards: the documented playable-content
-  operation returns 403 for them and group responses carry only `yoto:#`
-  track references, not signed URLs.
+- Enumerating purchased cards that are not in any Library group.
 - Permanent offline downloads of Yoto media.
 - Creating or editing MYO cards or family-library groups.
 - Device discovery, configuration, commands, or telemetry.
@@ -134,8 +134,20 @@ Not currently supported:
 - Reporting Yoto accounts through `auditui auth status` (that command currently
   reports Audible-compatible profiles only).
 
-These boundaries are deliberate. Auditui will not substitute undocumented or
-reverse-engineered endpoints for unavailable public API operations.
+### Playback
+
+For a card, Auditui first calls the documented
+`GET /content/{cardId}?playable=true&signingType=s3`. Yoto answers that with
+signed URLs for Make Your Own cards but `403` for purchased cards, and group
+responses carry only `yoto:#` track references. Only after that refusal does
+Auditui call `GET /card/{cardId}` on the same `api.yotoplay.com` host with the
+same token; for cards the family owns it returns the same card document with
+short-lived CloudFront-signed track URLs, which are handed to mpv in memory and
+never persisted. This operation is absent from the public reference, so Yoto
+may change it without notice; if it stops working, purchased cards will again
+show as library-only items rather than failing loudly. Auditui does not use any
+other unlisted endpoint, does not circumvent rate limits or access controls,
+and never downloads or caches purchased media.
 
 ## Data handling
 

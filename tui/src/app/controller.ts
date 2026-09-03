@@ -19,7 +19,7 @@ export function unplayableMessage(item: {
   downloadable?: boolean;
 }): string {
   if (item.provider === "yoto") {
-    return "Yoto's public API does not provide playable audio for purchased cards; only Make Your Own cards can be streamed";
+    return "Yoto did not provide playable audio for this card; refresh the library and try again";
   }
   if (item.downloadable !== false) return "Download this title before playing it";
   return `${item.title} is not currently available for playback or download`;

@@ -230,10 +230,12 @@ pub fn accessToken(allocator: std.mem.Allocator, io: std.Io, environ: std.proces
 /// Yoto's documented playable-content operation returns signed URLs only for
 /// content the token may read. Purchased cards inside groups answer 403 and
 /// expose only `yoto:#` track references, so they are listed but not streamed.
-fn cardHasSignedTracks(card: api.Card) bool {
-    for (card.content.chapters) |chapter| for (chapter.tracks) |track| {
-        if (track.trackUrl) |url| if (std.mem.startsWith(u8, url, "https://")) return true;
-    };
+/// A card is streamable when it carries track references. Signed https URLs
+/// play directly; `yoto:#` references are resolved to signed URLs at play time
+/// through playableSource.
+fn cardHasTracks(card: api.Card) bool {
+    for (card.content.chapters) |chapter| for (chapter.tracks) |track|
+        if (track.trackUrl) |url| if (url.len != 0) return true;
     return false;
 }
 
@@ -281,7 +283,7 @@ fn writeLibraryCache(allocator: std.mem.Allocator, io: std.Io, path: []const u8,
         if (card.deleted or card.cardId.len == 0 or card.title.len == 0 or seen.contains(card.cardId)) continue;
         try seen.put(allocator, card.cardId, {});
         if (count != 0) try output.writer.writeByte(',');
-        try writeCard(&output.writer, card, account, cardHasSignedTracks(card));
+        try writeCard(&output.writer, card, account, cardHasTracks(card));
         count += 1;
     };
     for (hydrated) |document| {
@@ -367,24 +369,33 @@ fn appendEdlPart(writer: *std.Io.Writer, url: []const u8, first: *bool) !void {
 pub fn playableSource(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8, content_id: []const u8) anyerror![]u8 {
     const access = try accessToken(allocator, io, environ, account, false);
     defer access.deinit();
-    var document = try api.fetchPlayableContent(allocator, io, access.token, content_id, null);
+    // Documented operation first: it signs Make Your Own media. Yoto refuses it
+    // for purchased cards, which the card operation on the same host resolves.
+    var document = api.fetchPlayableContent(allocator, io, access.token, content_id, null) catch |err| switch (err) {
+        error.ContentForbidden, error.ContentNotFound => try api.fetchCard(allocator, io, access.token, content_id),
+        else => return err,
+    };
     defer document.deinit();
     var output: std.Io.Writer.Allocating = .init(allocator);
     errdefer output.deinit();
     try output.writer.writeAll("edl://");
     var first = true;
     for (document.parsed.value.card.content.chapters) |chapter| for (chapter.tracks) |track|
-        if (track.trackUrl) |url| try appendEdlPart(&output.writer, url, &first);
+        if (track.trackUrl) |url| appendEdlPart(&output.writer, url, &first) catch |err| switch (err) {
+            error.InvalidPlayableUrl => continue,
+            else => return err,
+        };
     if (first) return error.NoPlayableTracks;
     return output.toOwnedSlice();
 }
 
-test "only cards with signed https tracks are streamable" {
+test "cards with signed or yoto:# track references are streamable" {
     const signed: api.Card = .{ .cardId = "a", .title = "A", .content = .{ .chapters = &.{.{ .tracks = &.{.{ .trackUrl = "https://media.example/x" }} }} } };
     const reference: api.Card = .{ .cardId = "b", .title = "B", .content = .{ .chapters = &.{.{ .tracks = &.{.{ .trackUrl = "yoto:#hash" }} }} } };
-    try std.testing.expect(cardHasSignedTracks(signed));
-    try std.testing.expect(!cardHasSignedTracks(reference));
-    try std.testing.expect(!cardHasSignedTracks(.{ .cardId = "c", .title = "C" }));
+    try std.testing.expect(cardHasTracks(signed));
+    try std.testing.expect(cardHasTracks(reference));
+    try std.testing.expect(!cardHasTracks(.{ .cardId = "c", .title = "C" }));
+    try std.testing.expect(!cardHasTracks(.{ .cardId = "d", .title = "D", .content = .{ .chapters = &.{.{ .tracks = &.{.{ .trackUrl = "" }} }} } }));
 }
 
 test "Yoto accounts reject traversal" {
