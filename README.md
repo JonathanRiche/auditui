@@ -42,9 +42,40 @@ needed, for example `auditui auth login --country-code ca` for Canada. Add
 passphrase prompts. Auditui requires `mpv` for playback and `sqlite3` for durable
 non-secret state.
 
-To connect Yoto, first create a Public Client in the Yoto developer dashboard
-and register `http://127.0.0.1:8787/callback`. Copy its client ID into this
-single command—no `.env` file or shell export is needed:
+### Connect Yoto
+
+Open the [Yoto developer dashboard](https://dashboard.yoto.dev/), choose
+**Create New Application**, and complete the form as follows:
+
+1. Enter `Auditui` as the name. A suitable description is
+   `A terminal interface for browsing and playing Audible and Yoto libraries.`
+2. Choose **Public Client**. Auditui is a local PKCE client and must not be
+   configured with or given a client secret.
+3. Set **Allowed Callback URLs** to exactly
+   `http://127.0.0.1:8787/callback`.
+
+![Yoto application name, description, Public Client selection, and callback URL](docs/images/yoto-create-application.png)
+
+Leave **Allowed Logout URLs**, **Application Logo**, and **Application Privacy
+Policy URL** empty for local development. They can be filled with real hosted
+URLs before applying for Yoto verification.
+
+4. Under **Scopes**, select only:
+   - `family:library:view`
+   - `user:content:view`
+
+Do not select either `manage` scope or `user:icons:manage`; Auditui does not
+need write access.
+
+![The read-only scopes available in the Yoto developer dashboard](docs/images/yoto-select-scopes.png)
+
+5. Read and accept **Terms and Conditions** and **Data Privacy**, then choose
+   **Create Application**.
+
+![Yoto scope, terms, data privacy, and Create Application controls](docs/images/yoto-create-confirm.png)
+
+After creation, copy the displayed **Client ID** into this single command—no
+`.env` file or shell export is needed:
 
 ```sh
 auditui auth login --provider yoto --client-id YOUR_CLIENT_ID

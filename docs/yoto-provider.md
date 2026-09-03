@@ -27,6 +27,10 @@ and register this exact redirect URL:
 http://127.0.0.1:8787/callback
 ```
 
+The README's [illustrated Yoto setup](../README.md#connect-yoto) shows every
+dashboard field, the two read-only scopes to select, and which optional fields
+to leave blank during development.
+
 Copy the issued client identifier into this one-line setup command. No `.env`
 file and no exported shell variable are required:
 
