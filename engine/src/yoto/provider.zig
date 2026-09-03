@@ -359,11 +359,24 @@ pub fn loadCache(allocator: std.mem.Allocator, io: std.Io, environ: std.process.
     return library.loadCache(allocator, io, path);
 }
 
-fn appendEdlPart(writer: *std.Io.Writer, url: []const u8, first: *bool) !void {
+/// Appends one mpv EDL segment. The chapter title is passed explicitly:
+/// without it mpv names the chapter after the source, which would surface
+/// the signed media URL in RPC messages and on screen.
+fn appendEdlPart(writer: *std.Io.Writer, url: []const u8, title: []const u8, first: *bool) !void {
     if (!std.mem.startsWith(u8, url, "https://") or std.mem.indexOfAny(u8, url, "\r\n") != null) return error.InvalidPlayableUrl;
     if (!first.*) try writer.writeByte(';');
     first.* = false;
     try writer.print("%{d}%{s}", .{ url.len, url });
+    const label = if (title.len != 0 and title.len <= 256) title else "Track";
+    try writer.print(",title=%{d}%{s}", .{ label.len, label });
+}
+
+/// Human chapter label for a Yoto track: the track title, else the chapter
+/// title, else a positional fallback that never reveals the source.
+fn trackLabel(chapter: api.Chapter, track: api.Track, position: usize, buffer: []u8) []const u8 {
+    if (track.title.len != 0) return track.title;
+    if (chapter.title.len != 0) return chapter.title;
+    return std.fmt.bufPrint(buffer, "Track {d}", .{position}) catch "Track";
 }
 
 pub fn playableSource(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, account: []const u8, content_id: []const u8) anyerror![]u8 {
@@ -380,11 +393,16 @@ pub fn playableSource(allocator: std.mem.Allocator, io: std.Io, environ: std.pro
     errdefer output.deinit();
     try output.writer.writeAll("edl://");
     var first = true;
-    for (document.parsed.value.card.content.chapters) |chapter| for (chapter.tracks) |track|
-        if (track.trackUrl) |url| appendEdlPart(&output.writer, url, &first) catch |err| switch (err) {
+    var position: usize = 0;
+    var label_buffer: [32]u8 = undefined;
+    for (document.parsed.value.card.content.chapters) |chapter| for (chapter.tracks) |track| {
+        const url = track.trackUrl orelse continue;
+        position += 1;
+        appendEdlPart(&output.writer, url, trackLabel(chapter, track, position, &label_buffer), &first) catch |err| switch (err) {
             error.InvalidPlayableUrl => continue,
             else => return err,
         };
+    };
     if (first) return error.NoPlayableTracks;
     return output.toOwnedSlice();
 }
@@ -405,13 +423,21 @@ test "Yoto accounts reject traversal" {
     try std.testing.expect(!validAccount("nested/account"));
 }
 
-test "multi-track sources use an in-memory length-delimited mpv EDL" {
+test "multi-track sources use an in-memory length-delimited mpv EDL with safe chapter titles" {
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
     try output.writer.writeAll("edl://");
     var first = true;
-    try appendEdlPart(&output.writer, "https://media.example/one?a=1;b=2", &first);
-    try appendEdlPart(&output.writer, "https://media.example/two", &first);
-    try std.testing.expectEqualStrings("edl://%33%https://media.example/one?a=1;b=2;%25%https://media.example/two", output.written());
-    try std.testing.expectError(error.InvalidPlayableUrl, appendEdlPart(&output.writer, "http://unsafe.example", &first));
+    try appendEdlPart(&output.writer, "https://media.example/one?a=1;b=2", "Intro, part 1; take 2", &first);
+    try appendEdlPart(&output.writer, "https://media.example/two", "", &first);
+    try std.testing.expectEqualStrings(
+        "edl://%33%https://media.example/one?a=1;b=2,title=%21%Intro, part 1; take 2;%25%https://media.example/two,title=%5%Track",
+        output.written(),
+    );
+    try std.testing.expectError(error.InvalidPlayableUrl, appendEdlPart(&output.writer, "yoto:#hash", "x", &first));
+    try std.testing.expectError(error.InvalidPlayableUrl, appendEdlPart(&output.writer, "https://media.example/bad\r\n", "x", &first));
+    var buffer: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("Song", trackLabel(.{ .title = "Chapter" }, .{ .title = "Song" }, 1, &buffer));
+    try std.testing.expectEqualStrings("Chapter", trackLabel(.{ .title = "Chapter" }, .{}, 1, &buffer));
+    try std.testing.expectEqualStrings("Track 7", trackLabel(.{}, .{}, 7, &buffer));
 }
