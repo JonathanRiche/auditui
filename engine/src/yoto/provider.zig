@@ -143,12 +143,25 @@ fn authorizeOnce(allocator: std.mem.Allocator, io: std.Io, server: anytype, conf
         _ = child.wait(io) catch {};
     } else |_| {}
 
-    const stream = try server.accept(io);
-    defer stream.close(io);
+    // Browsers request /favicon.ico (and similar) after rendering the page we
+    // serve to an earlier tab. Answer those and keep waiting for the real
+    // callback instead of aborting and closing the port under the browser.
     var read_buffer: [16 * 1024]u8 = undefined;
-    var reader: std.Io.net.Stream.Reader = .init(stream, io, &read_buffer);
-    const request_line = (try reader.interface.takeDelimiter('\n')) orelse return error.InvalidCallback;
-    const clean_line = std.mem.trimEnd(u8, request_line, "\r");
+    var stream: std.Io.net.Stream = undefined;
+    var clean_line: []const u8 = undefined;
+    while (true) {
+        stream = try server.accept(io);
+        var reader: std.Io.net.Stream.Reader = .init(stream, io, &read_buffer);
+        const request_line = (reader.interface.takeDelimiter('\n') catch null) orelse {
+            stream.close(io);
+            continue;
+        };
+        clean_line = std.mem.trimEnd(u8, request_line, "\r");
+        if (auth.isCallbackRequestLine(clean_line)) break;
+        respondPlain(io, stream, "HTTP/1.1 404 Not Found", "Not found");
+        stream.close(io);
+    }
+    defer stream.close(io);
     var rejection_description: ?[]u8 = null;
     defer if (rejection_description) |value| allocator.free(value);
     const callback = auth.parseLoopbackRequestDetailed(allocator, clean_line, &pending.state, &rejection_description) catch |err| {

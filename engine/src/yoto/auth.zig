@@ -137,6 +137,24 @@ pub const Callback = struct {
     }
 };
 
+/// True when a loopback request line targets the OAuth callback path. Browsers
+/// also fetch e.g. /favicon.ico after rendering our responses; those must be
+/// answered and ignored rather than treated as the authorization callback.
+pub fn isCallbackRequestLine(request_line: []const u8) bool {
+    var parts = std.mem.splitScalar(u8, request_line, ' ');
+    _ = parts.next() orelse return false;
+    const target = parts.next() orelse return false;
+    return std.mem.eql(u8, target, "/callback") or std.mem.startsWith(u8, target, "/callback?");
+}
+
+test "browser side requests are not mistaken for the callback" {
+    try std.testing.expect(isCallbackRequestLine("GET /callback?code=x&state=y HTTP/1.1"));
+    try std.testing.expect(isCallbackRequestLine("GET /callback HTTP/1.1"));
+    try std.testing.expect(!isCallbackRequestLine("GET /favicon.ico HTTP/1.1"));
+    try std.testing.expect(!isCallbackRequestLine("GET /callbackx?code=x HTTP/1.1"));
+    try std.testing.expect(!isCallbackRequestLine("GET"));
+}
+
 /// Parses the request target from a loopback HTTP request. The integration
 /// listener must bind only 127.0.0.1 and pass the first request line here.
 pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const u8, expected_state: []const u8) !Callback {
