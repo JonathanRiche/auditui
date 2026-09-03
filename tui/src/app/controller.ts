@@ -195,7 +195,7 @@ export class AppController {
     const index = state.profiles.findIndex((profile) => profile.name === name);
     if (index >= 0) this.host.dispatch({ type: "move", amount: index - state.selectedIndex });
     const profile = state.profiles[index];
-    if (profile) void this.applyProfile(profile.name, profile.secure);
+    if (profile) void this.applyProfile(profile);
   }
 
   requestProfileRemoval(): void {
@@ -320,6 +320,7 @@ export class AppController {
     }
     if (state.searchMode) {
       if (key.name === "escape") this.host.dispatch({ type: "search.change", query: "" });
+      if (key.name === "return") void this.searchAccountLibrary(state.query);
       if (key.name === "escape" || key.name === "return")
         this.host.dispatch({ type: "search.close" });
       else if (key.name === "backspace")
@@ -383,10 +384,8 @@ export class AppController {
       this.requestWishlistRemoval();
     else if ((name === "x" || name === "delete") && state.screen === "settings")
       this.requestProfileRemoval();
-    else if (name === "a" && state.screen === "library" && !state.profileName)
-      void this.startOnboarding("audible");
-    else if (name === "y" && state.screen === "library" && !state.profileName)
-      void this.startOnboarding("yoto");
+    else if (name === "a" && state.screen === "library") void this.startOnboarding("audible");
+    else if (name === "y" && state.screen === "library") void this.startOnboarding("yoto");
     else if (name === "b" && state.screen === "now-playing")
       void this.playerCommand("bookmark-add", {
         label: `Bookmark at ${Math.floor(state.player.positionSeconds)}s`,
@@ -485,7 +484,7 @@ export class AppController {
     } else if (state.screen === "settings") {
       const profile = state.profiles[state.selectedIndex];
       if (!profile) return;
-      void this.applyProfile(profile.name, profile.secure);
+      void this.applyProfile(profile);
     } else if (state.screen === "now-playing") {
       const bookmark = state.player.bookmarks[state.selectedIndex];
       if (bookmark) void this.playerCommand("seek-absolute", { value: bookmark.positionSeconds });
@@ -524,7 +523,12 @@ export class AppController {
             value && typeof value === "object" && (value as { name?: unknown }).name === "default",
         ) ??
         profileItems.find((value) => value && typeof value === "object")) as
-        | { name?: unknown; securePermissions?: unknown }
+        | {
+            name?: unknown;
+            securePermissions?: unknown;
+            provider?: unknown;
+            account?: unknown;
+          }
         | undefined;
       this.host.dispatch({
         type: "profiles.loaded",
@@ -553,11 +557,10 @@ export class AppController {
         type: "profile.loaded",
         name: typeof profile?.name === "string" ? profile.name : null,
         secure: profile?.securePermissions !== false,
+        ...(typeof profile?.provider === "string" ? { provider: profile.provider } : {}),
+        ...(typeof profile?.account === "string" ? { account: profile.account } : {}),
       });
-      const result = await client.request<unknown>(
-        "library.list",
-        typeof profile?.name === "string" ? { profile: profile.name } : {},
-      );
+      const result = await client.request<unknown>("library.list", this.accountParams());
       const items = normalizeLibrary(result);
       this.host.dispatch({ type: "library.loaded", items });
       await Promise.allSettled([this.loadDownloads(), this.loadPlayer()]);
@@ -566,16 +569,32 @@ export class AppController {
     }
   }
 
-  private async applyProfile(name: string, secure: boolean): Promise<void> {
+  private async applyProfile(profile: AppState["profiles"][number]): Promise<void> {
     const client = this.client;
     if (!client) return;
+    const { name, secure, provider, account } = profile;
     try {
       await client.request("profile.select", { profile: name });
+      // Make the chosen account identity active before refresh so the very
+      // first provider request cannot accidentally target the old account.
+      this.host.dispatch({
+        type: "profile.loaded",
+        name,
+        secure,
+        ...(provider ? { provider } : {}),
+        ...(account ? { account } : {}),
+      });
       await this.refreshAccountLibrary(true);
       // The refresh reloads profile metadata. Reassert the user's explicit
       // selection last so a stale/malformed profile.list response cannot make
       // the Settings screen appear to ignore a successful selection.
-      this.host.dispatch({ type: "profile.loaded", name, secure });
+      this.host.dispatch({
+        type: "profile.loaded",
+        name,
+        secure,
+        ...(provider ? { provider } : {}),
+        ...(account ? { account } : {}),
+      });
       const selectedIndex = this.host
         .getState()
         .profiles.findIndex((profile) => profile.name === name);
@@ -600,21 +619,21 @@ export class AppController {
 
   private async performAccountRefresh(manual: boolean): Promise<void> {
     const client = this.client;
-    const profile = this.host.getState().profileName;
+    const state = this.host.getState();
+    const profile = state.profileName;
+    const providerLabel = state.activeProvider === "yoto" ? "Yoto" : "Audible";
     if (!client || !profile) {
       this.host.dispatch({
         type: "message",
-        message: "Connect an account first: auditui auth login",
+        message: "Connect an Audible or Yoto account first from Settings",
       });
       return;
     }
     this.host.dispatch({ type: "library.loading" });
     try {
-      const result = await client.request<unknown>(
-        "library.refresh",
-        { profile },
-        { timeoutMs: 120_000 },
-      );
+      const result = await client.request<unknown>("library.refresh", this.accountParams(), {
+        timeoutMs: 120_000,
+      });
       const count =
         result &&
         typeof result === "object" &&
@@ -625,7 +644,10 @@ export class AppController {
       this.lastAccountRefreshAt = Date.now();
       this.host.dispatch({
         type: "message",
-        message: count === null ? "Audible library refreshed" : `Refreshed ${count} Audible titles`,
+        message:
+          count === null
+            ? `${providerLabel} library refreshed`
+            : `Refreshed ${count} ${providerLabel} titles`,
       });
     } catch (error) {
       if (
@@ -642,7 +664,7 @@ export class AppController {
         if (refreshed) {
           await this.refresh();
           this.lastAccountRefreshAt = Date.now();
-          this.host.dispatch({ type: "message", message: "Audible library refreshed" });
+          this.host.dispatch({ type: "message", message: `${providerLabel} library refreshed` });
         } else {
           this.host.dispatch({
             type: "library.failed",
@@ -723,7 +745,8 @@ export class AppController {
     try {
       await this.client.request("downloads.start", {
         asin: item.asin ?? item.id,
-        ...(this.host.getState().profileName ? { profile: this.host.getState().profileName } : {}),
+        itemId: item.id,
+        ...this.accountParams(item),
       });
       this.host.dispatch({ type: "message", message: `Queued ${item.title}` });
       await this.loadDownloads();
@@ -738,10 +761,32 @@ export class AppController {
       ...(item.localPath ? { path: item.localPath } : {}),
       itemId: item.id,
       title: item.title,
-      ...(item.provider ? { provider: item.provider } : {}),
-      ...(item.account ? { account: item.account } : {}),
-      ...(this.host.getState().profileName ? { profile: this.host.getState().profileName } : {}),
+      ...this.accountParams(item),
     });
+  }
+
+  private accountParams(item?: LibraryItem): Record<string, unknown> {
+    const state = this.host.getState();
+    const provider = (item?.provider ?? state.activeProvider).toLowerCase();
+    const account = item?.account ?? state.activeAccount;
+    return {
+      provider,
+      ...(account ? { account } : {}),
+      ...(provider === "audible" && state.profileName ? { profile: state.profileName } : {}),
+    };
+  }
+
+  private async searchAccountLibrary(query: string): Promise<void> {
+    if (!this.client || !query.trim()) return;
+    try {
+      const result = await this.client.request<unknown>("library.search", {
+        query: query.trim(),
+        ...this.accountParams(),
+      });
+      this.host.dispatch({ type: "search.results", items: normalizeLibrary(result) });
+    } catch (error) {
+      this.host.dispatch({ type: "message", message: friendlyError(error) });
+    }
   }
 
   private async cancelSelectedDownload(): Promise<void> {

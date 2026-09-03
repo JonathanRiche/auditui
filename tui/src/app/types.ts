@@ -39,6 +39,8 @@ export interface DownloadJob {
   received: number;
   total: number | null;
   error?: string;
+  provider?: string;
+  account?: string;
 }
 
 export interface PlayerState {
@@ -84,6 +86,8 @@ export interface AppState {
   engineStatus: EngineStatus;
   profileName: string | null;
   profileSecure: boolean;
+  activeProvider: string;
+  activeAccount: string | null;
   message: string | null;
   width: number;
   height: number;
@@ -91,7 +95,13 @@ export interface AppState {
 
 export type Action =
   | { type: "engine.status"; status: EngineStatus; message?: string }
-  | { type: "profile.loaded"; name: string | null; secure: boolean }
+  | {
+      type: "profile.loaded";
+      name: string | null;
+      secure: boolean;
+      provider?: string;
+      account?: string | null;
+    }
   | { type: "library.loading" }
   | { type: "library.loaded"; items: LibraryItem[] }
   | { type: "library.failed"; message: string }
@@ -104,6 +114,7 @@ export type Action =
   | { type: "move"; amount: number }
   | { type: "search.open" }
   | { type: "search.change"; query: string }
+  | { type: "search.results"; items: LibraryItem[] }
   | { type: "search.close" }
   | { type: "help.toggle" }
   | { type: "command.toggle" }

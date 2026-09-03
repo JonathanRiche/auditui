@@ -74,6 +74,8 @@ export function normalizeDownloads(value: unknown): DownloadJob[] {
       received: number(job.received),
       total: typeof job.total === "number" ? job.total : null,
       ...(text(job.error) ? { error: text(job.error) } : {}),
+      ...(text(job.provider) ? { provider: text(job.provider).toLowerCase() } : {}),
+      ...(text(job.account) ? { account: text(job.account) } : {}),
     };
   });
 }
@@ -94,6 +96,8 @@ export function mergeCompletedDownloads(
         state: "completed",
         received: 1,
         total: 1,
+        ...(item.provider ? { provider: item.provider } : {}),
+        ...(item.account ? { account: item.account } : {}),
       }),
     );
   return [...jobs, ...completed];

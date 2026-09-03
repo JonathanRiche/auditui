@@ -45,6 +45,8 @@ export function initialState(width = 100, height = 30): AppState {
     engineStatus: "starting",
     profileName: null,
     profileSecure: true,
+    activeProvider: "audible",
+    activeAccount: null,
     message: null,
     width,
     height,
@@ -83,7 +85,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "engine.status":
       return { ...state, engineStatus: action.status, message: action.message ?? state.message };
     case "profile.loaded":
-      return { ...state, profileName: action.name, profileSecure: action.secure };
+      return {
+        ...state,
+        profileName: action.name,
+        profileSecure: action.secure,
+        activeProvider: action.provider ?? "audible",
+        activeAccount: action.account ?? action.name,
+      };
     case "library.loading":
       // A remote reconciliation should not replace a useful cached library
       // with the initial loading screen.
@@ -180,6 +188,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const visibleItems = filtered(state.library, action.query);
       return { ...state, query: action.query, visibleItems, selectedIndex: 0 };
     }
+    case "search.results":
+      return {
+        ...state,
+        visibleItems: action.items,
+        selectedIndex: Math.min(state.selectedIndex, Math.max(0, action.items.length - 1)),
+      };
     case "search.close":
       return { ...state, searchMode: false };
     case "help.toggle":

@@ -1077,11 +1077,17 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
         width: "100%",
       }),
     );
-    if (!state.downloads.length)
-      return this.addEmpty(
-        "No active downloads",
-        "Press d on any library title to download it for offline playback.",
+    if (!state.downloads.length) {
+      const hasStreamOnlyTitles = state.library.some(
+        (item) => item.streamable && item.downloadable === false,
       );
+      return this.addEmpty(
+        "No offline downloads",
+        hasStreamOnlyTitles
+          ? "Yoto titles stream directly and do not need an Audible-style download."
+          : "Press d on a downloadable library title to save it for offline playback.",
+      );
+    }
     state.downloads.forEach((job, index) =>
       this.body.add(this.downloadCard(job, index === state.selectedIndex, state.width)),
     );

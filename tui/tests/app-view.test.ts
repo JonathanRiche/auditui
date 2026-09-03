@@ -216,6 +216,13 @@ describe("retained app view", () => {
     expect(detail).toContain("READY TO STREAM");
     expect(detail).toContain("Stream / play");
     expect(detail).not.toContain("d  Download");
+
+    state = reducer(state, { type: "navigate", screen: "downloads" });
+    view.render(state);
+    await setup.renderOnce();
+    const downloads = setup.captureCharFrame();
+    expect(downloads).toContain("Yoto titles stream directly");
+    expect(downloads).not.toContain("Press d on any library title");
   });
 
   test("clicks play/pause and clicks or drags the timeline to seek", async () => {

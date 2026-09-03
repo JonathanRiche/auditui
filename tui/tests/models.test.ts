@@ -89,6 +89,7 @@ describe("engine model compatibility", () => {
         state: "completed",
         received: 1,
         total: 1,
+        provider: "audible",
       },
     ]);
     const real = {

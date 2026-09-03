@@ -226,7 +226,11 @@ test("emits only canonical protocol parameters for media actions", async () => {
   controller.handleKey(key("."));
   await Bun.sleep(0);
 
-  expect(calls.find((call) => call.method === "downloads.start")?.params).toEqual({ asin: "B001" });
+  expect(calls.find((call) => call.method === "downloads.start")?.params).toEqual({
+    asin: "B001",
+    itemId: "1",
+    provider: "audible",
+  });
   const commands = calls
     .filter((call) => call.method === "player.command")
     .map((call) => call.params);
@@ -235,6 +239,7 @@ test("emits only canonical protocol parameters for media actions", async () => {
     path: "/library/Dune.m4b",
     itemId: "1",
     title: "Dune",
+    provider: "audible",
   });
   expect(commands).toContainEqual({ command: "seek-relative", value: -10 });
   expect(commands).toContainEqual({ command: "chapter-next" });
@@ -311,7 +316,14 @@ test("r refreshes the selected account using canonical RPC parameters", async ()
   expect(calls.filter((call) => call.method === "library.refresh")).toHaveLength(
     automaticRefreshes + 1,
   );
-  expect(calls).toContainEqual({ method: "library.refresh", params: { profile: "Jonathan-zig" } });
+  expect(calls).toContainEqual({
+    method: "library.refresh",
+    params: {
+      provider: "audible",
+      account: "Jonathan-zig",
+      profile: "Jonathan-zig",
+    },
+  });
   expect(state.message).toBe("Refreshed 7 Audible titles");
 });
 
@@ -568,7 +580,13 @@ test("command palette and product actions emit canonical wishlist, retry, and pl
   await Bun.sleep(0);
   expect(calls).toContainEqual({
     method: "downloads.start",
-    params: { asin: "B012345678", profile: "test" },
+    params: {
+      asin: "B012345678",
+      itemId: "B012345678",
+      provider: "audible",
+      account: "test",
+      profile: "test",
+    },
   });
 
   state = reducer(state, {
@@ -662,8 +680,33 @@ test("streams Yoto items without routing them through Audible downloads", async 
   const client = {
     async request(method: string, params: Record<string, unknown> = {}) {
       calls.push({ method, params });
-      if (method === "profile.list") return { items: [] };
+      if (method === "profile.list")
+        return {
+          selectedProfile: "yoto-family",
+          items: [
+            {
+              name: "yoto-family",
+              securePermissions: true,
+              provider: "yoto",
+              account: "kids-room",
+            },
+          ],
+        };
       if (method === "library.list") return { items: [] };
+      if (method === "library.refresh") return { itemCount: 1 };
+      if (method === "library.search")
+        return {
+          items: [
+            {
+              id: "yoto-1",
+              title: "Bedtime Story",
+              provider: "yoto",
+              account: "kids-room",
+              streamable: true,
+              downloadable: false,
+            },
+          ],
+        };
       if (method === "downloads.list") return { jobs: [] };
       if (method === "player.status") return {};
       return {};
@@ -724,6 +767,23 @@ test("streams Yoto items without routing them through Audible downloads", async 
     },
   });
   expect(calls.some((call) => call.method === "downloads.start")).toBe(false);
+
+  expect(calls).toContainEqual({
+    method: "library.list",
+    params: { provider: "yoto", account: "kids-room" },
+  });
+  expect(calls).toContainEqual({
+    method: "library.refresh",
+    params: { provider: "yoto", account: "kids-room" },
+  });
+  controller.openSearch();
+  for (const character of "Bedtime") controller.handleKey(key(character, character));
+  controller.handleKey(key("return"));
+  await Bun.sleep(0);
+  expect(calls).toContainEqual({
+    method: "library.search",
+    params: { query: "Bedtime", provider: "yoto", account: "kids-room" },
+  });
 
   controller.handleKey(key("d"));
   expect(state.message).toContain("stream-only");
