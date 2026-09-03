@@ -262,7 +262,7 @@ pub fn refreshTokenBody(allocator: std.mem.Allocator, config: Config, refresh_to
     return output.toOwnedSlice();
 }
 
-fn exchangeBody(allocator: std.mem.Allocator, io: std.Io, body: []const u8, now: i64) !TokenSet {
+fn exchangeBody(allocator: std.mem.Allocator, io: std.Io, body: []u8, now: i64) !TokenSet {
     defer {
         std.crypto.secureZero(u8, body);
         allocator.free(body);
@@ -375,13 +375,13 @@ test "loopback callback requires exact state and handles percent encoding" {
 
 test "token parsing requires a rotated refresh token" {
     var tokens = try parseTokenResponse(std.testing.allocator,
-        \\{"access_token":"access","refresh_token":"rotated","token_type":"Bearer","scope":"offline_access","expires_in":3600}
+        \\{"access_token":"synthetic-access","refresh_token":"synthetic-rotated","token_type":"Bearer","scope":"offline_access","expires_in":3600}
     , 1_000);
     defer tokens.deinit();
-    try std.testing.expectEqualStrings("rotated", tokens.refresh_token);
+    try std.testing.expectEqualStrings("synthetic-rotated", tokens.refresh_token);
     try std.testing.expectEqual(@as(i64, 4_600), tokens.expires_at);
     try std.testing.expectError(error.MissingRotatedRefreshToken, parseTokenResponse(std.testing.allocator,
-        \\{"access_token":"access","token_type":"Bearer","expires_in":3600}
+        \\{"access_token":"synthetic-access","token_type":"Bearer","expires_in":3600}
     , 1_000));
 }
 
@@ -402,7 +402,7 @@ test "credential replacement is mode 0600 and round trips rotated tokens" {
     const path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/yoto.json", .{tmp.sub_path});
     defer std.testing.allocator.free(path);
     var tokens = try parseTokenResponse(std.testing.allocator,
-        \\{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","scope":"offline_access","expires_in":3600}
+        \\{"access_token":"synthetic-new-access","refresh_token":"synthetic-new-refresh","token_type":"Bearer","scope":"offline_access","expires_in":3600}
     , 100);
     defer tokens.deinit();
     try saveCredentials(std.testing.allocator, std.testing.io, path, "public-client", tokens);
@@ -410,6 +410,6 @@ test "credential replacement is mode 0600 and round trips rotated tokens" {
     if (@import("builtin").os.tag != .windows) try std.testing.expectEqual(@as(u32, 0o600), stat.permissions.toMode() & 0o777);
     var loaded = try loadCredentials(std.testing.allocator, std.testing.io, path);
     defer loaded.deinit();
-    try std.testing.expectEqualStrings("new-refresh", loaded.parsed.value.refresh_token);
+    try std.testing.expectEqualStrings("synthetic-new-refresh", loaded.parsed.value.refresh_token);
     try std.testing.expectEqual(@as(i64, 3_700), loaded.parsed.value.expires_at);
 }

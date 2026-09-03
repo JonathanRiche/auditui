@@ -68,6 +68,7 @@ function validateMethodParams(request: Record<string, unknown>, fixtureName: str
     "profile.remove": "profileRemove",
     "library.list": "libraryQuery",
     "library.search": "librarySearch",
+    "library.refresh": "libraryRefresh",
     "downloads.start": "downloadStart",
     "downloads.cancel": "downloadCancel",
     "wishlist.list": "wishlistList",

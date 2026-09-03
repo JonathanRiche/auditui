@@ -672,7 +672,7 @@ test("profile selection persists and safe local removal requires confirmation", 
     method: "profile.remove",
     params: { profile: "second", confirm: true },
   });
-  expect(state.message).toContain("Audible account was not changed");
+  expect(state.message).toContain("provider account itself was not changed");
 });
 
 test("streams Yoto items without routing them through Audible downloads", async () => {

@@ -93,3 +93,25 @@ tests, and user-facing documentation; a schema or UI label alone does not count.
   `docs/compatibility.md` and `docs/compatibility-manifest.json`.
 - Release artifact SHA-256:
   `dcc616ee703e0c65cd051b9924934f81eed9fa036fe531b2bd0034e75310a688`.
+
+## P5 — Yoto second provider
+
+- [x] Generalize account, item, playback, and cache identities with explicit
+      provider IDs while migrating existing Audible state without data loss.
+- [x] Add public-client Yoto OAuth Authorization Code + PKCE login with a
+      loopback callback and atomic rotating-refresh-token storage.
+- [x] Load documented MYO and family-library-group content with artwork,
+      descriptions, chapters, and capability metadata.
+- [x] Resolve signed Yoto media only when playback starts and stream it through
+      supervised mpv without persisting signed URLs or commercial audio.
+- [x] Add provider-aware CLI, onboarding, library presentation, actions, and
+      actionable unsupported-capability messages.
+- [x] Cover the provider with offline Zig, RPC, TypeScript, protocol, migration,
+      security, and packaging tests and document its public-API limitations.
+
+Yoto completion evidence (2026-09-03): the complete offline and release gates
+pass, including 83 Zig tests, 57 TUI tests, provider-neutral SQLite migration,
+protocol fixtures, isolated Yoto RPC account/cache/search/removal coverage,
+real mpv RPC playback coverage, secret scanning, and packaged installer checks.
+Live Yoto authorization remains an explicit user acceptance step because each
+installation must supply its own dashboard-issued Public Client ID.

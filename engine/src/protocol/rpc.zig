@@ -11,6 +11,7 @@ const download_jobs = @import("../downloads/jobs.zig");
 const session = @import("../auth/session.zig");
 const mpv = @import("../player/mpv.zig");
 const database_mod = @import("../storage/database.zig");
+const yoto = @import("../yoto/provider.zig");
 
 pub const version: u32 = 1;
 
@@ -40,6 +41,7 @@ pub const Runtime = struct {
     volume: f64 = 100,
     ended: bool = false,
     profile_name: ?[]const u8 = null,
+    provider_id: []const u8 = "audible",
     last_saved_position: f64 = 0,
     last_saved_duration: f64 = 0,
     bookmarks: []const BookmarkRecord = &.{},
@@ -91,7 +93,7 @@ fn persistPlayback(runtime: *Runtime) !void {
     const item_id = runtime.item_id orelse return;
     const title = runtime.title orelse return;
     const position = if (runtime.ended) 0 else mpv.resumePosition(runtime.position_seconds, runtime.duration_seconds);
-    try database.putPlaybackPosition(profile, item_id, title, position, runtime.duration_seconds);
+    try database.putProviderPlaybackPosition(.{ .provider_id = runtime.provider_id, .account_id = profile }, item_id, title, position, runtime.duration_seconds);
     runtime.last_saved_position = position;
     runtime.last_saved_duration = runtime.duration_seconds;
 }
@@ -100,7 +102,7 @@ fn loadBookmarks(allocator: std.mem.Allocator, runtime: *Runtime) !void {
     const database = runtime.database orelse return;
     const profile = runtime.profile_name orelse return;
     const item_id = runtime.item_id orelse return;
-    const stored = try database.listBookmarks(allocator, profile, item_id);
+    const stored = try database.listProviderBookmarks(allocator, .{ .provider_id = runtime.provider_id, .account_id = profile }, item_id);
     const result = try allocator.alloc(Runtime.BookmarkRecord, stored.len);
     for (stored, 0..) |bookmark, index| result[index] = .{
         .id = bookmark.id,
@@ -685,17 +687,17 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     if (params_value) |params| if (params != .object) return failure(writer, id, "INVALID_REQUEST", "params must be an object");
 
     const allowed_params: []const []const u8 = if (std.mem.eql(u8, method, "profile.select"))
-        &.{"profile"}
+        &.{ "profile", "provider", "account" }
     else if (std.mem.eql(u8, method, "profile.remove"))
         &.{ "profile", "confirm" }
     else if (std.mem.eql(u8, method, "library.list"))
-        &.{ "profile", "cursor", "limit" }
+        &.{ "provider", "account", "profile", "cursor", "limit" }
     else if (std.mem.eql(u8, method, "library.search"))
-        &.{ "profile", "query", "cursor", "limit" }
+        &.{ "provider", "account", "profile", "query", "cursor", "limit" }
     else if (std.mem.eql(u8, method, "library.refresh"))
-        &.{"profile"}
+        &.{ "provider", "account", "profile" }
     else if (std.mem.eql(u8, method, "downloads.start"))
-        &.{ "profile", "asin", "itemId", "format", "outputDir", "localPath" }
+        &.{ "provider", "account", "profile", "asin", "itemId", "format", "outputDir", "localPath" }
     else if (std.mem.eql(u8, method, "downloads.cancel"))
         &.{"jobId"}
     else if (std.mem.eql(u8, method, "wishlist.list"))
@@ -703,7 +705,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     else if (std.mem.eql(u8, method, "wishlist.add") or std.mem.eql(u8, method, "wishlist.remove"))
         &.{ "profile", "asin" }
     else if (std.mem.eql(u8, method, "player.command"))
-        &.{ "command", "value", "path", "localPath", "itemId", "title", "resume", "profile", "label", "bookmarkId" }
+        &.{ "command", "value", "path", "localPath", "itemId", "title", "resume", "provider", "account", "profile", "label", "bookmarkId" }
     else if (std.mem.eql(u8, method, "cancel"))
         &.{"id"}
     else if (std.mem.eql(u8, method, "auth.start"))
@@ -720,17 +722,40 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     if (std.mem.eql(u8, method, "profile.list") or std.mem.eql(u8, method, "profiles.list")) {
         const found = try profiles.discoverAll(allocator, io, environ);
         defer profiles.deinitProfiles(allocator, found);
-        var values: std.ArrayList(struct { name: []const u8, securePermissions: bool }) = .empty;
+        const yoto_accounts = try yoto.discoverAccounts(allocator, io, environ);
+        defer yoto.deinitAccounts(allocator, yoto_accounts);
+        var values: std.ArrayList(struct { name: []const u8, securePermissions: bool, provider: []const u8, account: []const u8 }) = .empty;
         defer values.deinit(allocator);
+        var owned_names: std.ArrayList([]u8) = .empty;
+        defer {
+            for (owned_names.items) |name| allocator.free(name);
+            owned_names.deinit(allocator);
+        }
         for (found) |profile| {
-            try values.append(allocator, .{ .name = profile.name, .securePermissions = profile.secure_permissions });
+            try values.append(allocator, .{ .name = profile.name, .securePermissions = profile.secure_permissions, .provider = "audible", .account = profile.name });
             if (runtime.database) |database| database.putProfile(profile.name, null, null) catch {};
+        }
+        for (yoto_accounts) |account| {
+            const name = try std.fmt.allocPrint(allocator, "yoto:{s}", .{account.id});
+            try owned_names.append(allocator, name);
+            try values.append(allocator, .{ .name = name, .securePermissions = account.secure_permissions, .provider = "yoto", .account = account.id });
+            if (runtime.database) |database| {
+                database.putProvider("yoto", "Yoto") catch {};
+                database.putAccount(.{ .identity = .{ .provider_id = "yoto", .account_id = account.id }, .display_name = account.id }) catch {};
+            }
         }
         var selected: ?[]u8 = if (runtime.database) |database| try database.getSelectedProfile(allocator) else null;
         defer if (selected) |name| allocator.free(name);
+        if (runtime.database) |database| if (try database.getSelectedAccount(allocator)) |selected_account| {
+            defer selected_account.deinit(allocator);
+            if (std.mem.eql(u8, selected_account.provider_id, "yoto")) {
+                if (selected) |name| allocator.free(name);
+                selected = try std.fmt.allocPrint(allocator, "yoto:{s}", .{selected_account.account_id});
+            }
+        };
         if (selected) |name| {
             var still_present = false;
-            for (found) |profile| if (std.mem.eql(u8, profile.name, name)) {
+            for (values.items) |profile| if (std.mem.eql(u8, profile.name, name)) {
                 still_present = true;
                 break;
             };
@@ -739,18 +764,36 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                 selected = null;
             }
         }
-        if (selected == null and found.len != 0 and runtime.database != null) {
-            const fallback = for (found) |profile| {
-                if (std.mem.eql(u8, profile.name, "default")) break profile.name;
-            } else found[0].name;
-            try runtime.database.?.setSelectedProfile(fallback);
-            selected = try allocator.dupe(u8, fallback);
+        if (selected == null and values.items.len != 0 and runtime.database != null) {
+            const fallback = for (values.items) |profile| {
+                if (std.mem.eql(u8, profile.name, "default")) break profile;
+            } else values.items[0];
+            try runtime.database.?.setSelectedAccount(.{ .provider_id = fallback.provider, .account_id = fallback.account });
+            if (std.mem.eql(u8, fallback.provider, "audible")) try runtime.database.?.setSelectedProfile(fallback.account);
+            selected = try allocator.dupe(u8, fallback.name);
         }
         return success(writer, id, .{ .items = values.items, .selectedProfile = selected });
     }
     if (std.mem.eql(u8, method, "profile.select")) {
         const params = params_value orelse return failure(writer, id, "INVALID_REQUEST", "params are required");
         const name = stringParam(params.object, "profile") orelse return failure(writer, id, "INVALID_REQUEST", "profile is required");
+        const provider_id = stringParam(params.object, "provider") orelse if (std.mem.startsWith(u8, name, "yoto:")) "yoto" else "audible";
+        const account = stringParam(params.object, "account") orelse if (std.mem.eql(u8, provider_id, "yoto") and std.mem.startsWith(u8, name, "yoto:")) name[5..] else name;
+        if (std.mem.eql(u8, provider_id, "yoto")) {
+            const accounts = try yoto.discoverAccounts(allocator, io, environ);
+            defer yoto.deinitAccounts(allocator, accounts);
+            var exists = false;
+            for (accounts) |candidate| if (std.mem.eql(u8, candidate.id, account)) {
+                exists = true;
+                break;
+            };
+            if (!exists) return failure(writer, id, "INVALID_REQUEST", "Yoto account was not found");
+            const database = runtime.database orelse return failure(writer, id, "INTERNAL", "account selection storage is unavailable");
+            database.putAccount(.{ .identity = .{ .provider_id = "yoto", .account_id = account }, .display_name = account }) catch return failure(writer, id, "INTERNAL", "Yoto account could not be saved");
+            database.setSelectedAccount(.{ .provider_id = "yoto", .account_id = account }) catch return failure(writer, id, "INTERNAL", "Yoto account selection could not be saved");
+            return success(writer, id, .{ .profile = name, .provider = "yoto", .account = account, .selected = true });
+        }
+        if (!std.mem.eql(u8, provider_id, "audible")) return failure(writer, id, "INVALID_REQUEST", "provider must be audible or yoto");
         const found = try profiles.discoverAll(allocator, io, environ);
         defer profiles.deinitProfiles(allocator, found);
         var exists = false;
@@ -761,7 +804,8 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         if (!exists) return failure(writer, id, "INVALID_REQUEST", "profile was not found");
         const database = runtime.database orelse return failure(writer, id, "INTERNAL", "profile selection storage is unavailable");
         database.setSelectedProfile(name) catch return failure(writer, id, "INTERNAL", "profile selection could not be saved");
-        return success(writer, id, .{ .profile = name, .selected = true });
+        database.setSelectedAccount(.{ .provider_id = "audible", .account_id = name }) catch {};
+        return success(writer, id, .{ .profile = name, .provider = "audible", .account = name, .selected = true });
     }
     if (std.mem.eql(u8, method, "profile.status")) {
         const selected = if (runtime.database) |database| try database.getSelectedProfile(allocator) else null;
@@ -772,6 +816,22 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         const params = params_value orelse return failure(writer, id, "INVALID_REQUEST", "params are required");
         const name = stringParam(params.object, "profile") orelse return failure(writer, id, "INVALID_REQUEST", "profile is required");
         if (boolParam(params.object, "confirm") != true) return failure(writer, id, "CONFIRMATION_REQUIRED", "set confirm=true to remove only the local credential copy");
+        if (std.mem.startsWith(u8, name, "yoto:")) {
+            const account = name[5..];
+            const credential_path = yoto.credentialsPath(allocator, environ, account) catch return failure(writer, id, "INVALID_REQUEST", "Yoto account name is invalid");
+            defer allocator.free(credential_path);
+            std.Io.Dir.cwd().deleteFile(io, credential_path) catch |err| switch (err) {
+                error.FileNotFound => return failure(writer, id, "INVALID_REQUEST", "Yoto account was not found"),
+                else => return failure(writer, id, "INTERNAL", "local Yoto credentials could not be removed"),
+            };
+            const cache_path = yoto.cachePath(allocator, environ, account) catch null;
+            if (cache_path) |path| {
+                defer allocator.free(path);
+                std.Io.Dir.cwd().deleteFile(io, path) catch {};
+            }
+            if (runtime.database) |database| database.removeProviderAccount(.{ .provider_id = "yoto", .account_id = account }) catch return failure(writer, id, "INTERNAL", "local Yoto state could not be removed");
+            return success(writer, id, .{ .profile = name, .provider = "yoto", .account = account, .removed = true, .remoteDeregistered = false });
+        }
         const found = try profiles.discoverAll(allocator, io, environ);
         defer profiles.deinitProfiles(allocator, found);
         var local_path: ?[]const u8 = null;
@@ -809,7 +869,22 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     }
     if (std.mem.eql(u8, method, "library.refresh")) {
         const params = params_value orelse return failure(writer, id, "INVALID_REQUEST", "params are required");
-        const profile_name = stringParam(params.object, "profile") orelse return failure(writer, id, "INVALID_REQUEST", "profile is required");
+        const provider_id = stringParam(params.object, "provider") orelse "audible";
+        const account = stringParam(params.object, "account") orelse stringParam(params.object, "profile") orelse "default";
+        if (std.mem.eql(u8, provider_id, "yoto")) {
+            const result = yoto.refreshLibrary(allocator, io, environ, account) catch |err| switch (err) {
+                error.FileNotFound, error.InvalidRefreshToken, error.TokenRefreshRejected, error.Unauthorized => return failure(writer, id, "REAUTH_REQUIRED", "the Yoto account must be connected again"),
+                error.InvalidAccountName => return failure(writer, id, "INVALID_REQUEST", "the Yoto account name is invalid"),
+                else => return failure(writer, id, "INTERNAL", "Yoto library refresh failed without replacing the existing cache"),
+            };
+            if (runtime.database) |database| {
+                database.putProvider("yoto", "Yoto") catch {};
+                database.putAccount(.{ .identity = .{ .provider_id = "yoto", .account_id = account }, .display_name = account }) catch {};
+            }
+            return success(writer, id, .{ .provider = "yoto", .account = account, .itemCount = result.item_count, .tokenRefreshed = result.token_refreshed });
+        }
+        if (!std.mem.eql(u8, provider_id, "audible")) return failure(writer, id, "INVALID_REQUEST", "provider must be audible or yoto");
+        const profile_name = account;
         if (profile_name.len == 0) return failure(writer, id, "INVALID_REQUEST", "profile must not be empty");
         const xdg = paths.resolve(allocator, environ) catch return failure(writer, id, "INTERNAL", "application paths could not be resolved");
         defer xdg.deinit(allocator);
@@ -830,6 +905,16 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         return success(writer, id, .{ .profile = profile_name, .itemCount = result.item_count, .tokenRefreshed = result.token_refreshed });
     }
     if (std.mem.eql(u8, method, "library.list") or std.mem.eql(u8, method, "library.search")) {
+        const requested_provider = if (params_value) |params| stringParam(params.object, "provider") else null;
+        const account = if (params_value) |params| stringParam(params.object, "account") orelse stringParam(params.object, "profile") orelse "default" else "default";
+        if (requested_provider) |provider_id| {
+            if (std.mem.eql(u8, provider_id, "yoto")) {
+                var cached = yoto.loadCache(allocator, io, environ, account) catch return libraryResponse(allocator, writer, id, method, object, &.{});
+                defer cached.deinit();
+                return libraryResponse(allocator, writer, id, method, object, cached.value.items);
+            }
+            if (!std.mem.eql(u8, provider_id, "audible")) return failure(writer, id, "INVALID_REQUEST", "provider must be audible or yoto");
+        }
         const xdg = paths.resolve(allocator, environ) catch return libraryResponse(allocator, writer, id, method, object, &.{});
         defer xdg.deinit(allocator);
         const cache_path = try std.fs.path.join(allocator, &.{ xdg.cache, "library.json" });
@@ -837,8 +922,23 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         if (library.loadCache(allocator, io, cache_path)) |cached| {
             defer cached.deinit();
             if (runtime.database) |database| database.upsertLibraryItems(if (params_value) |params| stringParam(params.object, "profile") orelse "default" else "default", cached.value.items) catch {};
+            if (requested_provider != null) return libraryResponse(allocator, writer, id, method, object, cached.value.items);
+            if (yoto.loadCache(allocator, io, environ, account)) |yoto_cached_value| {
+                var yoto_cached = yoto_cached_value;
+                defer yoto_cached.deinit();
+                var merged: std.ArrayList(library.Item) = .empty;
+                defer merged.deinit(allocator);
+                try merged.appendSlice(allocator, cached.value.items);
+                try merged.appendSlice(allocator, yoto_cached.value.items);
+                return libraryResponse(allocator, writer, id, method, object, merged.items);
+            } else |_| {}
             if (cached.value.items.len != 0) return libraryResponse(allocator, writer, id, method, object, cached.value.items);
         } else |_| {}
+        if (requested_provider == null) if (yoto.loadCache(allocator, io, environ, account)) |yoto_cached_value| {
+            var yoto_cached = yoto_cached_value;
+            defer yoto_cached.deinit();
+            if (yoto_cached.value.items.len != 0) return libraryResponse(allocator, writer, id, method, object, yoto_cached.value.items);
+        } else |_| {};
         const local_directory = environ.getAlloc(allocator, "AUDIBLE_LIBRARY_DIR") catch return libraryResponse(allocator, writer, id, method, object, &.{});
         defer allocator.free(local_directory);
         const scanned = library.scanDirectory(allocator, io, local_directory) catch return libraryResponse(allocator, writer, id, method, object, &.{});
@@ -912,6 +1012,8 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     }
     if (std.mem.eql(u8, method, "downloads.start")) {
         const params = params_value orelse return failure(writer, id, "INVALID_REQUEST", "params are required");
+        if (std.mem.eql(u8, stringParam(params.object, "provider") orelse "audible", "yoto"))
+            return failure(writer, id, "UNSUPPORTED", "Yoto titles stream securely and are not downloaded by Auditui");
         const source = stringParam(params.object, "localPath");
         const asin = stringParam(params.object, "asin") orelse stringParam(params.object, "itemId") orelse "local";
         const item_id = stringParam(params.object, "itemId") orelse asin;
@@ -981,9 +1083,21 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
         const params = params_value orelse return failure(writer, id, "INVALID_REQUEST", "params are required");
         const command = stringParam(params.object, "command") orelse return failure(writer, id, "INVALID_REQUEST", "command is required");
         if (std.mem.eql(u8, command, "play")) {
-            const local_path = stringParam(params.object, "localPath") orelse stringParam(params.object, "path") orelse return failure(writer, id, "INVALID_REQUEST", "play requires localPath");
-            const stat = std.Io.Dir.cwd().statFile(io, local_path, .{}) catch return failure(writer, id, "INVALID_REQUEST", "local media file was not found");
-            if (stat.kind != .file) return failure(writer, id, "INVALID_REQUEST", "localPath must identify a regular file");
+            const provider_id = stringParam(params.object, "provider") orelse "audible";
+            const account = stringParam(params.object, "account") orelse stringParam(params.object, "profile") orelse "default";
+            const local_path_param = stringParam(params.object, "localPath") orelse stringParam(params.object, "path");
+            const source = if (local_path_param) |local_path| blk: {
+                const stat = std.Io.Dir.cwd().statFile(io, local_path, .{}) catch return failure(writer, id, "INVALID_REQUEST", "local media file was not found");
+                if (stat.kind != .file) return failure(writer, id, "INVALID_REQUEST", "localPath must identify a regular file");
+                break :blk local_path;
+            } else if (std.mem.eql(u8, provider_id, "yoto")) blk: {
+                const item_id = stringParam(params.object, "itemId") orelse return failure(writer, id, "INVALID_REQUEST", "Yoto play requires itemId");
+                break :blk yoto.playableSource(allocator, io, environ, account, item_id) catch |err| switch (err) {
+                    error.FileNotFound, error.InvalidRefreshToken, error.TokenRefreshRejected, error.Unauthorized => return failure(writer, id, "REAUTH_REQUIRED", "the Yoto account must be connected again"),
+                    error.NoPlayableTracks => return failure(writer, id, "UNSUPPORTED", "this Yoto card has no playable audio tracks"),
+                    else => return failure(writer, id, "INTERNAL", "Yoto could not prepare this title for playback"),
+                };
+            } else return failure(writer, id, "INVALID_REQUEST", "play requires localPath");
             if (runtime.player != null) runtime.deinit(io);
             const xdg = try paths.resolve(allocator, environ);
             defer xdg.deinit(allocator);
@@ -998,8 +1112,8 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                 runtime.player = null;
                 return failure(writer, id, "INTERNAL", "mpv IPC did not become ready");
             };
-            if (std.ascii.eqlIgnoreCase(std.fs.path.extension(local_path), ".aaxc")) {
-                const voucher_path = try voucherPathForMedia(allocator, local_path);
+            if (local_path_param != null and std.ascii.eqlIgnoreCase(std.fs.path.extension(source), ".aaxc")) {
+                const voucher_path = try voucherPathForMedia(allocator, source);
                 defer allocator.free(voucher_path);
                 const profile_name = stringParam(params.object, "profile") orelse "default";
                 const voucher = api_download.voucherForProfile(allocator, io, environ, profile_name, voucher_path) catch {
@@ -1019,19 +1133,26 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                     return failure(writer, id, "INTERNAL", "could not configure protected Audible playback");
                 };
             }
-            sendMpv(io, socket_path, .{ .loadfile = local_path }) catch {
+            sendMpv(io, socket_path, .{ .loadfile = source }) catch {
                 if (runtime.player) |*child| child.kill(io);
                 runtime.player = null;
                 return failure(writer, id, "INTERNAL", "could not load the local media file");
             };
-            runtime.item_id = try allocator.dupe(u8, stringParam(params.object, "itemId") orelse local_path);
+            runtime.item_id = try allocator.dupe(u8, stringParam(params.object, "itemId") orelse source);
             runtime.title = if (stringParam(params.object, "title")) |title|
                 try allocator.dupe(u8, title)
+            else if (std.mem.eql(u8, provider_id, "yoto"))
+                try allocator.dupe(u8, runtime.item_id.?)
             else
-                try titleFromPath(allocator, local_path);
-            runtime.local_path = try allocator.dupe(u8, local_path);
+                try titleFromPath(allocator, source);
+            runtime.local_path = try allocator.dupe(u8, source);
             runtime.socket_path = socket_path;
-            runtime.profile_name = try allocator.dupe(u8, stringParam(params.object, "profile") orelse "default");
+            runtime.profile_name = try allocator.dupe(u8, account);
+            runtime.provider_id = provider_id;
+            if (runtime.database) |database| {
+                database.putProvider(provider_id, if (std.mem.eql(u8, provider_id, "yoto")) "Yoto" else "Audible") catch {};
+                database.putAccount(.{ .identity = .{ .provider_id = provider_id, .account_id = account }, .display_name = account }) catch {};
+            }
             runtime.paused = false;
             runtime.position_seconds = 0;
             runtime.duration_seconds = 0;
@@ -1059,7 +1180,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                 try std.Io.sleep(io, .fromMilliseconds(25), .awake);
             }
             if (runtime.database) |database| {
-                if (try database.getPlaybackPosition(runtime.profile_name.?, runtime.item_id.?)) |saved| {
+                if (try database.getProviderPlaybackPosition(.{ .provider_id = runtime.provider_id, .account_id = runtime.profile_name.? }, runtime.item_id.?)) |saved| {
                     const resume_at = mpv.resumePosition(saved.position_seconds, if (runtime.duration_seconds > 0) runtime.duration_seconds else saved.duration_seconds);
                     runtime.last_saved_position = resume_at;
                     runtime.last_saved_duration = saved.duration_seconds;
@@ -1134,7 +1255,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
                 .ended = runtime.ended,
             }) catch null;
             if (state) |current| runtime.position_seconds = current.time_pos;
-            _ = database.addBookmark(runtime.profile_name.?, runtime.item_id.?, runtime.title.?, runtime.position_seconds, stringParam(params.object, "label")) catch return failure(writer, id, "INTERNAL", "bookmark could not be saved");
+            _ = database.addProviderBookmark(.{ .provider_id = runtime.provider_id, .account_id = runtime.profile_name.? }, runtime.item_id.?, runtime.title.?, runtime.position_seconds, stringParam(params.object, "label")) catch return failure(writer, id, "INTERNAL", "bookmark could not be saved");
             loadBookmarks(allocator, runtime) catch return failure(writer, id, "INTERNAL", "bookmarks could not be loaded");
             return playerSuccess(allocator, io, writer, id, runtime);
         }
@@ -1142,7 +1263,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
             const bookmark_value = params.object.get("bookmarkId") orelse return failure(writer, id, "INVALID_REQUEST", "bookmarkId is required");
             if (bookmark_value != .integer or bookmark_value.integer < 1) return failure(writer, id, "INVALID_REQUEST", "bookmarkId must be a positive integer");
             const database = runtime.database orelse return failure(writer, id, "INTERNAL", "bookmark database is unavailable");
-            database.deleteBookmark(runtime.profile_name.?, bookmark_value.integer) catch return failure(writer, id, "INTERNAL", "bookmark could not be deleted");
+            database.deleteProviderBookmark(.{ .provider_id = runtime.provider_id, .account_id = runtime.profile_name.? }, bookmark_value.integer) catch return failure(writer, id, "INTERNAL", "bookmark could not be deleted");
             loadBookmarks(allocator, runtime) catch return failure(writer, id, "INTERNAL", "bookmarks could not be loaded");
             return playerSuccess(allocator, io, writer, id, runtime);
         }
@@ -1241,13 +1362,12 @@ test "RPC rejects unknown envelope fields" {
     try std.testing.expect(std.mem.indexOf(u8, out.written(), "INVALID_REQUEST") != null);
 }
 
-test "library refresh requires an explicit profile without touching network" {
+test "library refresh defaults to the primary account without touching network when absent" {
     var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer out.deinit();
     var runtime: Runtime = .{};
     try handleLine(std.testing.allocator, std.testing.io, .empty, &runtime, &out.writer, "{\"v\":1,\"id\":\"refresh-1\",\"method\":\"library.refresh\",\"params\":{}}");
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "INVALID_REQUEST") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out.written(), "profile is required") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out.written(), "\"ok\":false") != null);
 }
 
 test "RPC starts browser authorization without exposing PKCE verifier" {

@@ -574,7 +574,11 @@ export class AppController {
     if (!client) return;
     const { name, secure, provider, account } = profile;
     try {
-      await client.request("profile.select", { profile: name });
+      await client.request("profile.select", {
+        profile: name,
+        ...(provider ? { provider } : {}),
+        ...(account ? { account } : {}),
+      });
       // Make the chosen account identity active before refresh so the very
       // first provider request cannot accidentally target the old account.
       this.host.dispatch({
@@ -858,7 +862,7 @@ export class AppController {
         await this.refresh();
         this.host.dispatch({
           type: "message",
-          message: `Removed local profile ${confirmation.profile}; your Audible account was not changed`,
+          message: `Removed local account ${confirmation.profile}; the provider account itself was not changed`,
         });
       } catch (error) {
         this.host.dispatch({ type: "message", message: friendlyError(error) });
@@ -904,7 +908,10 @@ export class AppController {
       return;
     }
     await this.refresh();
-    if (this.host.getState().profileName) await this.refreshAccountLibrary(false);
+    const connectedProfile = this.host
+      .getState()
+      .profiles.find((profile) => (profile.provider ?? "audible") === provider);
+    if (connectedProfile) await this.applyProfile(connectedProfile);
     this.host.dispatch({
       type: "message",
       message: `${provider === "yoto" ? "Yoto" : "Audible"} account connected securely`,

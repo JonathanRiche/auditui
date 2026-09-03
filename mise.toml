@@ -131,6 +131,7 @@ run = [
   "bun integration-tests/download-rpc-e2e.ts",
   "bun integration-tests/download-cancel-retry-e2e.ts",
   "bun integration-tests/player-rpc-e2e.ts",
+  "bun integration-tests/yoto-rpc-e2e.ts",
 ]
 
 [tasks."playback:smoke"]

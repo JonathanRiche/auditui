@@ -4,7 +4,7 @@ const engine = @import("audible_engine");
 const help =
     \\Usage: audible [OPTIONS] COMMAND [ARGS]...
     \\
-    \\A command-line interface for Audible, backed by the native Zig engine.
+    \\The native provider engine for Auditui (Audible and Yoto).
     \\
     \\Global options:
     \\  -P, --profile NAME       Select profile
@@ -21,6 +21,8 @@ const help =
     \\  wishlist list|export|add|remove
     \\  manage auth-file|config|profile
     \\  quickstart               Configure a profile interactively
+    \\  auth login --provider yoto
+    \\                            Connect Yoto with browser OAuth + PKCE
     \\  internal health|rpc      Machine-facing integration
     \\
     \\Quickstart options:
@@ -373,9 +375,16 @@ fn writeTabularLibrary(writer: *std.Io.Writer, items: []const engine.library.Ite
 }
 
 fn libraryCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, export_data: bool, args: []const []const u8) !void {
-    const xdg = try engine.paths.resolve(allocator, environ);
-    defer xdg.deinit(allocator);
-    const cache_path = try std.fs.path.join(allocator, &.{ xdg.cache, "library.json" });
+    const provider = optionValue(args, "--provider", "") orelse "audible";
+    const account = optionValue(args, "--account", "") orelse optionValue(args, "--profile", "-P") orelse "default";
+    const cache_path = if (std.mem.eql(u8, provider, "yoto"))
+        try engine.yoto.provider.cachePath(allocator, environ, account)
+    else blk: {
+        if (!std.mem.eql(u8, provider, "audible")) return error.UnknownProvider;
+        const xdg = try engine.paths.resolve(allocator, environ);
+        defer xdg.deinit(allocator);
+        break :blk try std.fs.path.join(allocator, &.{ xdg.cache, "library.json" });
+    };
     defer allocator.free(cache_path);
     const cached = engine.library.loadCache(allocator, io, cache_path) catch |err| switch (err) {
         error.FileNotFound => {
@@ -392,7 +401,7 @@ fn libraryCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     if (start != null and end != null and std.mem.order(u8, start.?, end.?) == .gt) return error.InvalidDateRange;
     if (!export_data) {
         for (cached.value.items) |item| {
-            if (itemInDateRange(item, start, end)) try writer.print("{s}: {s}\n", .{ item.asin, item.title });
+            if (itemInDateRange(item, start, end)) try writer.print("{s}: {s}\n", .{ if (item.asin.len != 0) item.asin else item.id, item.title });
         }
         return;
     }
@@ -427,6 +436,13 @@ fn readPrivateProfile(allocator: std.mem.Allocator, io: std.Io, profile: engine.
 }
 
 fn libraryRefreshCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, args: []const []const u8) !void {
+    const provider = optionValue(args, "--provider", "") orelse "audible";
+    if (std.mem.eql(u8, provider, "yoto")) {
+        const account = optionValue(args, "--account", "") orelse optionValue(args, "--profile", "-P") orelse "default";
+        const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
+        return writer.print("Refreshed {d} Yoto titles for account {s}.\n", .{ result.item_count, account });
+    }
+    if (!std.mem.eql(u8, provider, "audible")) return error.UnknownProvider;
     const profile_name = try effectiveProfileName(allocator, io, environ, args);
     defer allocator.free(profile_name);
     const found = try engine.profiles.discoverAll(allocator, io, environ);
@@ -471,6 +487,19 @@ fn libraryRefreshCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.
         },
     };
     try writer.print("Refreshed {d} library titles for profile {s}.\n", .{ result.item_count, profile_name });
+}
+
+fn yotoLoginCommand(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, args: []const []const u8) !void {
+    const provider = optionValue(args, "--provider", "") orelse "audible";
+    if (!std.mem.eql(u8, provider, "yoto")) return error.UnknownProvider;
+    const account = optionValue(args, "--account", "") orelse optionValue(args, "--profile", "-P") orelse "default";
+    const explicit_client = optionValue(args, "--client-id", "");
+    const allocated_client = if (explicit_client == null) environ.getAlloc(allocator, "YOTO_CLIENT_ID") catch null else null;
+    defer if (allocated_client) |value| allocator.free(value);
+    const client_id = explicit_client orelse allocated_client orelse return error.YotoClientIdRequired;
+    try engine.yoto.provider.connect(allocator, io, environ, account, client_id, writer);
+    const result = try engine.yoto.provider.refreshLibrary(allocator, io, environ, account);
+    try writer.print("Loaded {d} Yoto titles.\n", .{result.item_count});
 }
 
 fn profileImport(allocator: std.mem.Allocator, io: std.Io, environ: std.process.Environ, writer: *std.Io.Writer, source: []const u8, name: []const u8) !void {
@@ -609,11 +638,12 @@ fn rootCommandIndex(args: []const []const u8) !usize {
 
 fn validateRequiredOptionValues(args: []const []const u8) !void {
     const requiring_value = [_][]const u8{
-        "--profile",         "-P",          "--country-code", "-cc",            "--method",     "-m", "--param",
-        "--body",            "-b",          "--output",       "-o",             "--format",     "-f", "--start-date",
-        "--end-date",        "--auth-file", "--asin",         "-a",             "--title",      "-t", "--output-dir",
-        "--quality",         "-q",          "--cover-size",   "--chapter-type", "--jobs",       "-j", "--filename-mode",
-        "--filename-length", "-l",          "--timeout",      "--page-size",    "--bunch-size",
+        "--profile",         "-P",          "--country-code", "-cc",            "--method",     "-m",         "--param",
+        "--body",            "-b",          "--output",       "-o",             "--format",     "-f",         "--start-date",
+        "--end-date",        "--auth-file", "--asin",         "-a",             "--title",      "-t",         "--output-dir",
+        "--quality",         "-q",          "--cover-size",   "--chapter-type", "--jobs",       "-j",         "--filename-mode",
+        "--filename-length", "-l",          "--timeout",      "--page-size",    "--bunch-size", "--provider", "--account",
+        "--client-id",
     };
     for (args, 0..) |arg, index| {
         for (requiring_value) |option| if (std.mem.eql(u8, arg, option)) {
@@ -641,6 +671,7 @@ fn run(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "internal") and tail.len >= 1 and std.mem.eql(u8, tail[0], "health")) return writeHealth(stdout);
     if (std.mem.eql(u8, command, "internal") and tail.len >= 2 and std.mem.eql(u8, tail[0], "download-worker")) return engine.rpc.runDownloadWorker(allocator, init.io, init.minimal.environ, stdout, tail[1]);
     if (std.mem.eql(u8, command, "internal") and tail.len >= 1 and std.mem.eql(u8, tail[0], "rpc")) return rpcLoop(allocator, init.io, init.minimal.environ, stdout);
+    if (std.mem.eql(u8, command, "auth") and tail.len >= 1 and std.mem.eql(u8, tail[0], "login")) return yotoLoginCommand(allocator, init.io, init.minimal.environ, stdout, tail[1..]);
     if (std.mem.eql(u8, command, "api") and tail.len >= 1) return apiCommand(allocator, init.io, init.minimal.environ, stdout, tail[0], all_options);
     if (std.mem.eql(u8, command, "activation-bytes")) return activationBytesCommand(allocator, init.io, init.minimal.environ, stdout, all_options);
     if (std.mem.eql(u8, command, "library") and tail.len >= 1 and std.mem.eql(u8, tail[0], "list")) return libraryCommand(allocator, init.io, init.minimal.environ, stdout, false, tail[1..]);
@@ -682,6 +713,8 @@ pub fn main(init: std.process.Init) void {
             error.InvalidHttpMethod => "InvalidHttpMethod: HTTP method must be GET, POST, PUT, or DELETE",
             error.InvalidJsonBody => "InvalidJsonBody: --body must contain valid JSON",
             error.InvalidQueryParameter => "InvalidQueryParameter: each --param must be a single key=value without newlines",
+            error.UnknownProvider => "unknown provider; choose audible or yoto",
+            error.YotoClientIdRequired => "Yoto requires a public client ID; set YOTO_CLIENT_ID or pass --client-id",
             error.MissingOptionValue => "MissingOptionValue: an option is missing its value; run --help for usage",
             else => @errorName(err),
         };

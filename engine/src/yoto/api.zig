@@ -142,6 +142,15 @@ pub fn playableContentUrl(allocator: std.mem.Allocator, content_id: []const u8, 
     return output.toOwnedSlice();
 }
 
+pub fn contentMetadataUrl(allocator: std.mem.Allocator, content_id: []const u8) ![]u8 {
+    if (content_id.len == 0) return error.MissingContentId;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try output.writer.writeAll(api_origin ++ "/content/");
+    try percentEncode(&output.writer, content_id);
+    return output.toOwnedSlice();
+}
+
 fn bearerValue(allocator: std.mem.Allocator, access_token: []const u8) ![]u8 {
     if (access_token.len == 0) return error.MissingAccessToken;
     if (std.mem.indexOfAny(u8, access_token, "\r\n") != null) return error.InvalidAccessToken;
@@ -176,6 +185,19 @@ pub fn fetchPlayableContent(allocator: std.mem.Allocator, io: std.Io, access_tok
     return parsePlayableContent(allocator, response.body);
 }
 
+/// Fetches card metadata without requesting signed playable URLs. This is used
+/// to hydrate family-library references during refresh.
+pub fn fetchContentMetadata(allocator: std.mem.Allocator, io: std.Io, access_token: []const u8, content_id: []const u8) !ContentDocument {
+    const url = try contentMetadataUrl(allocator, content_id);
+    defer allocator.free(url);
+    const response = try fetchAuthenticated(allocator, io, url, access_token);
+    defer response.deinit(allocator);
+    if (response.status == 401 or response.status == 403) return error.Unauthorized;
+    if (response.status == 404) return error.ContentNotFound;
+    if (response.status < 200 or response.status >= 300) return error.ContentRequestFailed;
+    return parsePlayableContent(allocator, response.body);
+}
+
 pub fn fetchFamilyGroups(allocator: std.mem.Allocator, io: std.Io, access_token: []const u8) !GroupsDocument {
     const response = try fetchAuthenticated(allocator, io, family_groups_url, access_token);
     defer response.deinit(allocator);
@@ -198,6 +220,13 @@ test "playable content URL uses only documented query fields and escapes identif
     const url = try playableContentUrl(std.testing.allocator, "card/id", "America/Toronto");
     defer std.testing.allocator.free(url);
     try std.testing.expectEqualStrings("https://api.yotoplay.com/content/card%2Fid?playable=true&signingType=s3&timezone=America%2FToronto", url);
+}
+
+test "metadata content URL never requests signed playback" {
+    const url = try contentMetadataUrl(std.testing.allocator, "card/id");
+    defer std.testing.allocator.free(url);
+    try std.testing.expectEqualStrings("https://api.yotoplay.com/content/card%2Fid", url);
+    try std.testing.expect(std.mem.indexOf(u8, url, "playable") == null);
 }
 
 test "playable content fixture retains signed track URLs" {

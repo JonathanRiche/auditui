@@ -3,13 +3,19 @@
   "$id": "https://audible-tui.invalid/protocol/v1/methods.schema.json",
   "title": "Auditui RPC v1 method payloads",
   "$defs": {
-    "profileName": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "providerId": { "type": "string", "enum": ["audible", "yoto"] },
+    "accountId": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "profileName": { "type": "string", "minLength": 1, "maxLength": 256 },
     "pageLimit": { "type": "integer", "minimum": 1, "maximum": 1000 },
     "profileSelect": {
       "type": "object",
       "additionalProperties": false,
       "required": ["profile"],
-      "properties": { "profile": { "$ref": "#/$defs/profileName" } }
+      "properties": {
+        "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" }
+      }
     },
     "profileRemove": {
       "type": "object",
@@ -25,6 +31,8 @@
       "additionalProperties": false,
       "properties": {
         "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" },
         "cursor": { "type": ["string", "null"] },
         "limit": { "$ref": "#/$defs/pageLimit" }
       }
@@ -35,6 +43,8 @@
       "required": ["query"],
       "properties": {
         "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" },
         "query": { "type": "string", "minLength": 1 },
         "cursor": { "type": ["string", "null"] },
         "limit": { "$ref": "#/$defs/pageLimit" }
@@ -43,8 +53,11 @@
     "libraryRefresh": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["profile"],
-      "properties": { "profile": { "$ref": "#/$defs/profileName" } }
+      "properties": {
+        "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" }
+      }
     },
     "downloadStart": {
       "type": "object",
@@ -55,6 +68,8 @@
       ],
       "properties": {
         "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" },
         "asin": { "type": "string", "pattern": "^[A-Za-z0-9]{10}$" },
         "itemId": { "type": "string", "minLength": 1 },
         "format": { "enum": ["aax", "aaxc"] },
@@ -79,6 +94,8 @@
       "required": ["asin"],
       "properties": {
         "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" },
         "asin": { "type": "string", "pattern": "^[A-Za-z0-9]{10}$" }
       }
     },
@@ -101,6 +118,8 @@
         "itemId": { "type": "string", "minLength": 1 },
         "title": { "type": "string", "minLength": 1 },
         "profile": { "$ref": "#/$defs/profileName" },
+        "provider": { "$ref": "#/$defs/providerId" },
+        "account": { "$ref": "#/$defs/accountId" },
         "resume": { "type": "number", "minimum": 0 },
         "label": { "type": "string", "maxLength": 512 },
         "bookmarkId": { "type": "integer", "minimum": 1 }

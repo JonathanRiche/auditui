@@ -2,7 +2,9 @@ const std = @import("std");
 
 pub const Item = struct {
     id: []const u8 = "",
-    asin: []const u8,
+    asin: []const u8 = "",
+    provider: []const u8 = "audible",
+    account: []const u8 = "default",
     title: []const u8,
     authors: []const []const u8 = &.{},
     narrators: []const []const u8 = &.{},
@@ -13,6 +15,8 @@ pub const Item = struct {
     releaseDate: ?[]const u8 = null,
     localPath: ?[]const u8 = null,
     downloaded: bool = false,
+    streamable: bool = false,
+    downloadable: bool = true,
 };
 
 pub const Page = struct {

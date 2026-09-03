@@ -22,6 +22,7 @@ pub const player = @import("player/mpv.zig");
 pub const rpc = @import("protocol/rpc.zig");
 pub const redact = @import("auth/redact.zig");
 pub const cli_support = @import("cli/support.zig");
+pub const yoto = @import("yoto/root.zig");
 
 test {
     _ = paths;
@@ -48,4 +49,5 @@ test {
     _ = rpc;
     _ = redact;
     _ = cli_support;
+    _ = yoto;
 }

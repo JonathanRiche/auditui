@@ -301,6 +301,23 @@ pub const Database = struct {
         try self.putSetting("account.selected.id", identity.account_id);
     }
 
+    pub fn removeProviderAccount(self: *Database, identity: provider_model.AccountIdentity) !void {
+        try identity.validate();
+        const q_provider = try quoteText(self.allocator, identity.provider_id);
+        defer self.allocator.free(q_provider);
+        const q_account = try quoteText(self.allocator, identity.account_id);
+        defer self.allocator.free(q_account);
+        const sql = try std.fmt.allocPrint(
+            self.allocator,
+            "PRAGMA foreign_keys=ON; BEGIN IMMEDIATE; DELETE FROM provider_accounts WHERE provider_id={s} AND account_id={s}; " ++
+                "DELETE FROM provider_items WHERE provider_id={s} AND NOT EXISTS " ++
+                "(SELECT 1 FROM account_library_items a WHERE a.provider_id=provider_items.provider_id AND a.item_id=provider_items.item_id); COMMIT;",
+            .{ q_provider, q_account, q_provider },
+        );
+        defer self.allocator.free(sql);
+        try self.execute(sql);
+    }
+
     pub fn getSelectedAccount(self: *Database, allocator: std.mem.Allocator) !?OwnedAccountIdentity {
         const output = try self.run("SELECT hex(provider_id)||'|'||hex(account_id) FROM provider_accounts WHERE is_default=1 LIMIT 1;");
         defer self.allocator.free(output);
