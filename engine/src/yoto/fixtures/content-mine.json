@@ -1,0 +1,16 @@
+{
+  "cards": [
+    {
+      "cardId": "37KwQ",
+      "title": "Bedtime",
+      "slug": "bedtime",
+      "metadata": {
+        "author": "Yoto",
+        "description": "A story",
+        "cover": { "imageL": "https://cdn.example/cover.png" },
+        "media": { "duration": 123.5, "fileSize": 456, "hasStreams": false }
+      },
+      "content": { "activity": "yoto_Player", "version": "1" }
+    }
+  ]
+}

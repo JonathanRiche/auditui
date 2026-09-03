@@ -1,0 +1,27 @@
+{
+  "card": {
+    "cardId": "abc",
+    "title": "My Card",
+    "metadata": { "author": "Parent" },
+    "content": {
+      "activity": "yoto_Player",
+      "version": "1",
+      "chapters": [
+        {
+          "key": "chapter-1",
+          "title": "One",
+          "duration": 42,
+          "tracks": [
+            {
+              "key": "track-1",
+              "title": "Track",
+              "format": "mp3",
+              "type": "audio",
+              "trackUrl": "https://signed.example/audio?signature=redacted"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

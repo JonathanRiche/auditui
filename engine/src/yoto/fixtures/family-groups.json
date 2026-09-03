@@ -1,0 +1,15 @@
+[
+  {
+    "id": "group-1",
+    "familyId": "family-1",
+    "name": "My Favourites",
+    "imageId": "fp-cards",
+    "imageUrl": "https://cdn.yoto.io/library/groups/fp-cards.png",
+    "items": [
+      { "contentId": "37KwQ", "addedAt": "2024-09-27T15:30:05.447Z" }
+    ],
+    "cards": [
+      { "cardId": "37KwQ", "title": "Bedtime" }
+    ]
+  }
+]

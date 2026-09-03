@@ -1,0 +1,415 @@
+const std = @import("std");
+const http_client = @import("../api/client.zig");
+const session = @import("../auth/session.zig");
+
+pub const authorize_url = "https://login.yotoplay.com/authorize";
+pub const token_url = "https://login.yotoplay.com/oauth/token";
+pub const api_audience = "https://api.yotoplay.com";
+pub const recommended_loopback_redirect = "http://127.0.0.1:8787/callback";
+pub const max_credential_bytes: usize = 1024 * 1024;
+
+pub const Config = struct {
+    /// Public-client identifier issued at https://dashboard.yoto.dev/.
+    client_id: []const u8,
+    redirect_uri: []const u8 = recommended_loopback_redirect,
+    scopes: []const u8 = "user:content:view family:library:view offline_access profile",
+
+    pub fn validate(self: Config) !void {
+        if (self.client_id.len == 0) return error.MissingClientId;
+        if (!std.mem.startsWith(u8, self.redirect_uri, "http://127.0.0.1:")) return error.NonLoopbackRedirect;
+        if (!std.mem.endsWith(u8, self.redirect_uri, "/callback")) return error.InvalidRedirectPath;
+        if (!containsScope(self.scopes, "offline_access")) return error.MissingOfflineAccessScope;
+    }
+};
+
+fn containsScope(scopes: []const u8, wanted: []const u8) bool {
+    var iterator = std.mem.tokenizeScalar(u8, scopes, ' ');
+    while (iterator.next()) |scope| if (std.mem.eql(u8, scope, wanted)) return true;
+    return false;
+}
+
+pub const PendingAuthorization = struct {
+    verifier: [64]u8,
+    state: [32]u8,
+
+    pub fn generate(io: std.Io) !PendingAuthorization {
+        var verifier_entropy: [48]u8 = undefined;
+        var state_entropy: [24]u8 = undefined;
+        try io.randomSecure(&verifier_entropy);
+        try io.randomSecure(&state_entropy);
+        var pending: PendingAuthorization = undefined;
+        _ = std.base64.url_safe_no_pad.Encoder.encode(&pending.verifier, &verifier_entropy);
+        _ = std.base64.url_safe_no_pad.Encoder.encode(&pending.state, &state_entropy);
+        return pending;
+    }
+
+    pub fn challenge(self: PendingAuthorization) [43]u8 {
+        var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(&self.verifier, &digest, .{});
+        var encoded: [43]u8 = undefined;
+        _ = std.base64.url_safe_no_pad.Encoder.encode(&encoded, &digest);
+        return encoded;
+    }
+};
+
+fn formEncode(writer: *std.Io.Writer, value: []const u8) !void {
+    const hex = "0123456789ABCDEF";
+    for (value) |byte| switch (byte) {
+        'A'...'Z', 'a'...'z', '0'...'9', '-', '.', '_', '~' => try writer.writeByte(byte),
+        ' ' => try writer.writeByte('+'),
+        else => try writer.writeAll(&.{ '%', hex[byte >> 4], hex[byte & 15] }),
+    };
+}
+
+fn appendQueryField(writer: *std.Io.Writer, first: *bool, name: []const u8, value: []const u8) !void {
+    try writer.writeByte(if (first.*) '?' else '&');
+    first.* = false;
+    try writer.writeAll(name);
+    try writer.writeByte('=');
+    try formEncode(writer, value);
+}
+
+fn constantTimeSliceEqual(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    var difference: u8 = 0;
+    for (a, b) |left, right| difference |= left ^ right;
+    return difference == 0;
+}
+
+pub fn buildAuthorizationUrl(allocator: std.mem.Allocator, config: Config, pending: PendingAuthorization) ![]u8 {
+    try config.validate();
+    const challenge = pending.challenge();
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try output.writer.writeAll(authorize_url);
+    var first = true;
+    try appendQueryField(&output.writer, &first, "audience", api_audience);
+    try appendQueryField(&output.writer, &first, "scope", config.scopes);
+    try appendQueryField(&output.writer, &first, "response_type", "code");
+    try appendQueryField(&output.writer, &first, "client_id", config.client_id);
+    try appendQueryField(&output.writer, &first, "code_challenge", &challenge);
+    try appendQueryField(&output.writer, &first, "code_challenge_method", "S256");
+    try appendQueryField(&output.writer, &first, "redirect_uri", config.redirect_uri);
+    try appendQueryField(&output.writer, &first, "state", &pending.state);
+    return output.toOwnedSlice();
+}
+
+pub const Callback = struct {
+    allocator: std.mem.Allocator,
+    code: []u8,
+
+    pub fn deinit(self: Callback) void {
+        std.crypto.secureZero(u8, self.code);
+        self.allocator.free(self.code);
+    }
+};
+
+/// Parses the request target from a loopback HTTP request. The integration
+/// listener must bind only 127.0.0.1 and pass the first request line here.
+pub fn parseLoopbackRequest(allocator: std.mem.Allocator, request_line: []const u8, expected_state: []const u8) !Callback {
+    if (request_line.len > 16 * 1024) return error.CallbackTooLarge;
+    if (expected_state.len == 0) return error.InvalidExpectedState;
+    var parts = std.mem.splitScalar(u8, request_line, ' ');
+    if (!std.mem.eql(u8, parts.next() orelse return error.InvalidCallback, "GET")) return error.InvalidCallbackMethod;
+    const target = parts.next() orelse return error.InvalidCallback;
+    if (!std.mem.startsWith(u8, target, "/callback?")) return error.InvalidCallbackPath;
+    const query = target["/callback?".len..];
+    var code: ?[]u8 = null;
+    errdefer if (code) |value| allocator.free(value);
+    var state_valid = false;
+    var state_seen = false;
+    var error_seen = false;
+    var fields = std.mem.splitScalar(u8, query, '&');
+    while (fields.next()) |field| {
+        const separator = std.mem.indexOfScalar(u8, field, '=') orelse continue;
+        const name = field[0..separator];
+        const raw = field[separator + 1 ..];
+        const decoded = try allocator.dupe(u8, raw);
+        defer allocator.free(decoded);
+        _ = std.mem.replaceScalar(u8, decoded, '+', ' ');
+        const value = std.Uri.percentDecodeInPlace(decoded);
+        if (std.mem.eql(u8, name, "code")) {
+            if (value.len == 0 or code != null) return error.InvalidAuthorizationCode;
+            code = try allocator.dupe(u8, value);
+        } else if (std.mem.eql(u8, name, "state")) {
+            if (state_seen) return error.DuplicateState;
+            state_seen = true;
+            state_valid = constantTimeSliceEqual(value, expected_state);
+        } else if (std.mem.eql(u8, name, "error")) {
+            error_seen = true;
+        }
+    }
+    if (error_seen) return error.AuthorizationRejected;
+    if (!state_valid) return error.StateMismatch;
+    return .{ .allocator = allocator, .code = code orelse return error.MissingAuthorizationCode };
+}
+
+/// Waits for one OAuth callback on the exact loopback address documented by
+/// Yoto. Call this concurrently with opening/printing buildAuthorizationUrl.
+/// The supplied Io can be cancelled by the caller to enforce its own timeout.
+pub fn waitForLoopbackCallback(allocator: std.mem.Allocator, io: std.Io, expected_state: []const u8) !Callback {
+    const address = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 8787);
+    var listener = try address.listen(io, .{ .reuse_address = true });
+    defer listener.deinit(io);
+    var stream = try listener.accept(io);
+    defer stream.close(io);
+
+    var receive_buffer: [16 * 1024]u8 = undefined;
+    var send_buffer: [1024]u8 = undefined;
+    var connection_reader = stream.reader(io, &receive_buffer);
+    var connection_writer = stream.writer(io, &send_buffer);
+    var server: std.http.Server = .init(&connection_reader.interface, &connection_writer.interface);
+    var request = try server.receiveHead();
+    if (request.head.method != .GET) {
+        try request.respond("Yoto sign-in callback must use GET. You can close this tab.", .{ .status = .method_not_allowed });
+        return error.InvalidCallbackMethod;
+    }
+    const request_line = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1", .{request.head.target});
+    defer allocator.free(request_line);
+    const callback = parseLoopbackRequest(allocator, request_line, expected_state) catch |err| {
+        try request.respond("Yoto sign-in could not be verified. Return to the terminal and try again.", .{ .status = .bad_request });
+        return err;
+    };
+    errdefer callback.deinit();
+    try request.respond("Yoto sign-in complete. You can close this tab and return to the terminal.", .{ .status = .ok });
+    return callback;
+}
+
+pub const TokenSet = struct {
+    allocator: std.mem.Allocator,
+    access_token: []u8,
+    refresh_token: []u8,
+    token_type: []u8,
+    scope: []u8,
+    expires_in: u32,
+    expires_at: i64,
+
+    pub fn deinit(self: TokenSet) void {
+        std.crypto.secureZero(u8, self.access_token);
+        std.crypto.secureZero(u8, self.refresh_token);
+        self.allocator.free(self.access_token);
+        self.allocator.free(self.refresh_token);
+        self.allocator.free(self.token_type);
+        self.allocator.free(self.scope);
+    }
+};
+
+const WireTokenSet = struct {
+    access_token: []const u8,
+    refresh_token: ?[]const u8 = null,
+    token_type: []const u8 = "Bearer",
+    scope: []const u8 = "",
+    expires_in: u32,
+    expires_at: ?i64 = null,
+};
+
+pub fn parseTokenResponse(allocator: std.mem.Allocator, body: []const u8, now: i64) !TokenSet {
+    if (body.len == 0 or body.len > max_credential_bytes) return error.InvalidTokenResponse;
+    const parsed = std.json.parseFromSlice(WireTokenSet, allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch return error.InvalidTokenResponse;
+    defer parsed.deinit();
+    const refresh_token = parsed.value.refresh_token orelse return error.MissingRotatedRefreshToken;
+    if (parsed.value.access_token.len == 0 or refresh_token.len == 0 or parsed.value.expires_in == 0 or parsed.value.expires_in > 86_400) return error.InvalidTokenResponse;
+    if (!std.ascii.eqlIgnoreCase(parsed.value.token_type, "Bearer")) return error.UnsupportedTokenType;
+    const expires_at = parsed.value.expires_at orelse now + @as(i64, parsed.value.expires_in);
+    if (expires_at <= now) return error.InvalidTokenResponse;
+    const access_token = try allocator.dupe(u8, parsed.value.access_token);
+    errdefer allocator.free(access_token);
+    const owned_refresh_token = try allocator.dupe(u8, refresh_token);
+    errdefer allocator.free(owned_refresh_token);
+    const token_type = try allocator.dupe(u8, parsed.value.token_type);
+    errdefer allocator.free(token_type);
+    const scope = try allocator.dupe(u8, parsed.value.scope);
+    errdefer allocator.free(scope);
+    return .{
+        .allocator = allocator,
+        .access_token = access_token,
+        .refresh_token = owned_refresh_token,
+        .token_type = token_type,
+        .scope = scope,
+        .expires_in = parsed.value.expires_in,
+        .expires_at = expires_at,
+    };
+}
+
+pub fn authorizationCodeBody(allocator: std.mem.Allocator, config: Config, code: []const u8, verifier: []const u8) ![]u8 {
+    try config.validate();
+    if (code.len == 0 or verifier.len < 43 or verifier.len > 128) return error.InvalidAuthorizationExchange;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    var first = true;
+    inline for (.{
+        .{ "grant_type", "authorization_code" }, .{ "client_id", config.client_id },       .{ "code_verifier", verifier },
+        .{ "code", code },                       .{ "redirect_uri", config.redirect_uri },
+    }) |field| {
+        if (!first) try output.writer.writeByte('&');
+        first = false;
+        try output.writer.writeAll(field[0]);
+        try output.writer.writeByte('=');
+        try formEncode(&output.writer, field[1]);
+    }
+    return output.toOwnedSlice();
+}
+
+pub fn refreshTokenBody(allocator: std.mem.Allocator, config: Config, refresh_token: []const u8) ![]u8 {
+    try config.validate();
+    if (refresh_token.len == 0) return error.MissingRefreshToken;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    try output.writer.writeAll("grant_type=refresh_token&client_id=");
+    try formEncode(&output.writer, config.client_id);
+    try output.writer.writeAll("&refresh_token=");
+    try formEncode(&output.writer, refresh_token);
+    return output.toOwnedSlice();
+}
+
+fn exchangeBody(allocator: std.mem.Allocator, io: std.Io, body: []const u8, now: i64) !TokenSet {
+    defer {
+        std.crypto.secureZero(u8, body);
+        allocator.free(body);
+    }
+    const response = try http_client.fetch(allocator, io, .POST, token_url, body, "application/x-www-form-urlencoded", &.{}, max_credential_bytes);
+    defer response.deinit(allocator);
+    if (response.status < 200 or response.status >= 300) return error.TokenExchangeRejected;
+    return parseTokenResponse(allocator, response.body, now);
+}
+
+pub fn exchangeAuthorizationCode(allocator: std.mem.Allocator, io: std.Io, config: Config, code: []const u8, verifier: []const u8, now: i64) !TokenSet {
+    return exchangeBody(allocator, io, try authorizationCodeBody(allocator, config, code, verifier), now);
+}
+
+/// Yoto refresh tokens are rotating/single-use. Call saveCredentials with the
+/// returned TokenSet before issuing another refresh.
+pub fn refreshTokens(allocator: std.mem.Allocator, io: std.Io, config: Config, refresh_token: []const u8, now: i64) !TokenSet {
+    return exchangeBody(allocator, io, try refreshTokenBody(allocator, config, refresh_token), now);
+}
+
+/// Refreshes and atomically persists the replacement token set before it is
+/// returned. This is the safe default for Yoto's single-use refresh tokens.
+pub fn refreshAndSave(allocator: std.mem.Allocator, io: std.Io, config: Config, path: []const u8, refresh_token: []const u8, now: i64) !TokenSet {
+    var tokens = try refreshTokens(allocator, io, config, refresh_token, now);
+    errdefer tokens.deinit();
+    try saveCredentials(allocator, io, path, config.client_id, tokens);
+    return tokens;
+}
+
+pub fn saveCredentials(allocator: std.mem.Allocator, io: std.Io, path: []const u8, client_id: []const u8, tokens: TokenSet) !void {
+    if (client_id.len == 0) return error.MissingClientId;
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    defer {
+        std.crypto.secureZero(u8, @constCast(output.written()));
+        output.deinit();
+    }
+    try std.json.Stringify.value(.{
+        .version = @as(u8, 1),
+        .client_id = client_id,
+        .access_token = tokens.access_token,
+        .refresh_token = tokens.refresh_token,
+        .token_type = tokens.token_type,
+        .scope = tokens.scope,
+        .expires_at = tokens.expires_at,
+    }, .{}, &output.writer);
+    try session.atomicWriteCredentials(allocator, io, path, output.written());
+}
+
+pub const StoredCredentials = struct {
+    version: u8,
+    client_id: []const u8,
+    access_token: []const u8,
+    refresh_token: []const u8,
+    token_type: []const u8,
+    scope: []const u8,
+    expires_at: i64,
+};
+
+pub const LoadedCredentials = struct {
+    parsed: std.json.Parsed(StoredCredentials),
+    pub fn deinit(self: *LoadedCredentials) void {
+        std.crypto.secureZero(u8, @constCast(self.parsed.value.access_token));
+        std.crypto.secureZero(u8, @constCast(self.parsed.value.refresh_token));
+        self.parsed.deinit();
+    }
+};
+
+pub fn loadCredentials(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !LoadedCredentials {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const stat = try file.stat(io);
+    if (@import("builtin").os.tag != .windows and stat.permissions.toMode() & 0o077 != 0) return error.InsecureCredentialPermissions;
+    if (stat.size == 0 or stat.size > max_credential_bytes) return error.InvalidCredentialFile;
+    var buffer: [4096]u8 = undefined;
+    var reader = file.reader(io, &buffer);
+    const bytes = try reader.interface.readAlloc(allocator, @intCast(stat.size));
+    defer {
+        std.crypto.secureZero(u8, bytes);
+        allocator.free(bytes);
+    }
+    const parsed = std.json.parseFromSlice(StoredCredentials, allocator, bytes, .{ .allocate = .alloc_always, .ignore_unknown_fields = true }) catch return error.InvalidCredentialFile;
+    if (parsed.value.version != 1 or parsed.value.client_id.len == 0 or parsed.value.access_token.len == 0 or parsed.value.refresh_token.len == 0) {
+        var invalid = parsed;
+        invalid.deinit();
+        return error.InvalidCredentialFile;
+    }
+    return .{ .parsed = parsed };
+}
+
+test "PKCE challenge and authorization URL use S256 and encoded public-client fields" {
+    var pending: PendingAuthorization = undefined;
+    pending.verifier = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_".*;
+    pending.state = "0123456789abcdefghijklmnopqrstuv".*;
+    const url = try buildAuthorizationUrl(std.testing.allocator, .{ .client_id = "public client" }, pending);
+    defer std.testing.allocator.free(url);
+    try std.testing.expect(std.mem.startsWith(u8, url, authorize_url));
+    try std.testing.expect(std.mem.indexOf(u8, url, "client_id=public+client") != null);
+    try std.testing.expect(std.mem.indexOf(u8, url, "code_challenge_method=S256") != null);
+    try std.testing.expect(std.mem.indexOf(u8, url, "redirect_uri=http%3A%2F%2F127.0.0.1%3A8787%2Fcallback") != null);
+    try std.testing.expect(std.mem.indexOf(u8, url, "offline_access") != null);
+}
+
+test "loopback callback requires exact state and handles percent encoding" {
+    const callback = try parseLoopbackRequest(std.testing.allocator, "GET /callback?code=one%2Ftwo&state=expected HTTP/1.1", "expected");
+    defer callback.deinit();
+    try std.testing.expectEqualStrings("one/two", callback.code);
+    try std.testing.expectError(error.StateMismatch, parseLoopbackRequest(std.testing.allocator, "GET /callback?code=x&state=wrong HTTP/1.1", "expected"));
+    try std.testing.expectError(error.AuthorizationRejected, parseLoopbackRequest(std.testing.allocator, "GET /callback?error=access_denied&state=expected HTTP/1.1", "expected"));
+}
+
+test "token parsing requires a rotated refresh token" {
+    var tokens = try parseTokenResponse(std.testing.allocator,
+        \\{"access_token":"access","refresh_token":"rotated","token_type":"Bearer","scope":"offline_access","expires_in":3600}
+    , 1_000);
+    defer tokens.deinit();
+    try std.testing.expectEqualStrings("rotated", tokens.refresh_token);
+    try std.testing.expectEqual(@as(i64, 4_600), tokens.expires_at);
+    try std.testing.expectError(error.MissingRotatedRefreshToken, parseTokenResponse(std.testing.allocator,
+        \\{"access_token":"access","token_type":"Bearer","expires_in":3600}
+    , 1_000));
+}
+
+test "token request bodies are form encoded" {
+    const config: Config = .{ .client_id = "client/id" };
+    const authorization = try authorizationCodeBody(std.testing.allocator, config, "code+value", "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG");
+    defer std.testing.allocator.free(authorization);
+    try std.testing.expect(std.mem.indexOf(u8, authorization, "client_id=client%2Fid") != null);
+    try std.testing.expect(std.mem.indexOf(u8, authorization, "code=code%2Bvalue") != null);
+    const refresh = try refreshTokenBody(std.testing.allocator, config, "old/token");
+    defer std.testing.allocator.free(refresh);
+    try std.testing.expectEqualStrings("grant_type=refresh_token&client_id=client%2Fid&refresh_token=old%2Ftoken", refresh);
+}
+
+test "credential replacement is mode 0600 and round trips rotated tokens" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/yoto.json", .{tmp.sub_path});
+    defer std.testing.allocator.free(path);
+    var tokens = try parseTokenResponse(std.testing.allocator,
+        \\{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","scope":"offline_access","expires_in":3600}
+    , 100);
+    defer tokens.deinit();
+    try saveCredentials(std.testing.allocator, std.testing.io, path, "public-client", tokens);
+    const stat = try std.Io.Dir.cwd().statFile(std.testing.io, path, .{});
+    if (@import("builtin").os.tag != .windows) try std.testing.expectEqual(@as(u32, 0o600), stat.permissions.toMode() & 0o777);
+    var loaded = try loadCredentials(std.testing.allocator, std.testing.io, path);
+    defer loaded.deinit();
+    try std.testing.expectEqualStrings("new-refresh", loaded.parsed.value.refresh_token);
+    try std.testing.expectEqual(@as(i64, 3_700), loaded.parsed.value.expires_at);
+}
