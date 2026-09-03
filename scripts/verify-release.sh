@@ -21,7 +21,12 @@ AUDITUI_INSTALL_PREFIX=$auditui_prefix "$auditui_package/install.sh"
 test -x "$auditui_prefix/bin/auditui"
 test -x "$auditui_prefix/bin/auditui-ui"
 test -x "$auditui_prefix/bin/auditui-engine"
-"$auditui_prefix/bin/auditui" --version | rg -q '^Auditui 0\.2\.0$'
+# The engine must run on any x86-64 CPU, not just the build host's.
+if objdump -d "$auditui_prefix/bin/auditui-engine" | rg -q '\b[yz]mm[0-9]'; then
+  printf 'Packaged engine uses non-baseline vector instructions; build with -Dcpu=baseline.\n' >&2
+  exit 1
+fi
+"$auditui_prefix/bin/auditui" --version | rg -q '^Auditui 0\.2\.1$'
 "$auditui_prefix/bin/auditui" --help | rg -q 'auditui auth login'
 "$auditui_prefix/bin/auditui" --help | rg -q -- '--provider NAME'
 test -f "$auditui_package/docs/yoto-provider.md"

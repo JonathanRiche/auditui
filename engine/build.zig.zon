@@ -1,6 +1,6 @@
 .{
     .name = .audible_engine,
-    .version = "0.2.0",
+    .version = "0.2.1",
     .fingerprint = 0x1cc60d97164fb3f6,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

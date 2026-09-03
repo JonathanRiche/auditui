@@ -23,7 +23,7 @@ run = "zig build"
 [tasks."zig:build-release"]
 description = "Build the native engine with release-safe checks"
 dir = "engine"
-run = "zig build -Doptimize=ReleaseSafe"
+run = "zig build -Doptimize=ReleaseSafe -Dcpu=baseline"
 
 [tasks."tui:install"]
 description = "Install exact TUI dependencies"
