@@ -44,8 +44,11 @@ non-secret state.
 
 The installer downloads the release archive and checksum from GitHub Releases,
 verifies it, and installs `auditui` under `~/.local/bin`. It never needs Git,
-Zig, Bun, Mise, or root access. Set `AUDITUI_INSTALL_PREFIX` to choose another
-prefix.
+Zig, Bun, Mise, or root access. When needed, it detects Bash, Zsh, or Fish and
+adds `~/.local/bin` to that shell's startup configuration without creating an
+alias. Follow the printed `source` command or open a new terminal to activate
+the updated PATH. Set `AUDITUI_INSTALL_PREFIX` to choose another prefix; custom
+prefixes print a PATH instruction instead of editing shell configuration.
 
 ## Develop from source
 

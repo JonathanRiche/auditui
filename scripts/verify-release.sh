@@ -48,4 +48,26 @@ AUDITUI_RELEASE_BASE_URL="file://$auditui_dist" \
 test -x "$auditui_bootstrap_prefix/bin/auditui"
 "$auditui_bootstrap_prefix/bin/auditui" --help | rg -q 'auditui auth login'
 
-printf 'Release archive, checksum, bootstrap install, migrations, and packaged CLI smoke test passed.\n'
+for auditui_shell in bash zsh fish; do
+  auditui_shell_home=$auditui_verify/shell-$auditui_shell
+  mkdir -p "$auditui_shell_home"
+  HOME=$auditui_shell_home AUDITUI_SHELL=/bin/$auditui_shell \
+    AUDITUI_RELEASE_BASE_URL="file://$auditui_dist" \
+    sh "$auditui_root/install.sh" >/dev/null
+  test -x "$auditui_shell_home/.local/bin/auditui"
+  case "$auditui_shell" in
+    bash) rg -Fxq 'export PATH="$HOME/.local/bin:$PATH"' "$auditui_shell_home/.bashrc" ;;
+    zsh) rg -Fxq 'export PATH="$HOME/.local/bin:$PATH"' "$auditui_shell_home/.zshrc" ;;
+    fish) rg -Fxq 'fish_add_path --global --prepend "$HOME/.local/bin"' "$auditui_shell_home/.config/fish/conf.d/auditui.fish" ;;
+  esac
+  HOME=$auditui_shell_home AUDITUI_SHELL=/bin/$auditui_shell \
+    AUDITUI_RELEASE_BASE_URL="file://$auditui_dist" \
+    sh "$auditui_root/install.sh" >/dev/null
+  case "$auditui_shell" in
+    bash) test "$(rg -Fxc 'export PATH="$HOME/.local/bin:$PATH"' "$auditui_shell_home/.bashrc")" = 1 ;;
+    zsh) test "$(rg -Fxc 'export PATH="$HOME/.local/bin:$PATH"' "$auditui_shell_home/.zshrc")" = 1 ;;
+    fish) test "$(rg -Fxc 'fish_add_path --global --prepend "$HOME/.local/bin"' "$auditui_shell_home/.config/fish/conf.d/auditui.fish")" = 1 ;;
+  esac
+done
+
+printf 'Release archive, checksum, shell PATH setup, migrations, and packaged CLI smoke test passed.\n'
