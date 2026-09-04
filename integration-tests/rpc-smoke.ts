@@ -72,7 +72,7 @@ try {
   assertExactKeys(health.result, ["engineVersion", "protocolVersion", "status"], "health result");
   if (
     health.result.protocolVersion !== 1 ||
-    health.result.engineVersion !== "0.3.3" ||
+    health.result.engineVersion !== "0.3.4" ||
     health.result.status !== "ok"
   ) {
     throw new Error(`unexpected health result: ${JSON.stringify(health.result)}`);

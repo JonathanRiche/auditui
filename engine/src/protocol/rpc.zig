@@ -697,7 +697,7 @@ pub fn handleLine(allocator: std.mem.Allocator, io: std.Io, environ: std.process
     if (params_value) |params| if (!objectHasOnly(params.object, allowed_params)) return failure(writer, id, "INVALID_REQUEST", "params contains an unknown field");
 
     if (std.mem.eql(u8, method, "health") or std.mem.eql(u8, method, "engine.health") or std.mem.eql(u8, method, "internal.health")) {
-        return success(writer, id, .{ .protocolVersion = version, .engineVersion = "0.3.3", .status = "ok" });
+        return success(writer, id, .{ .protocolVersion = version, .engineVersion = "0.3.4", .status = "ok" });
     }
     if (std.mem.eql(u8, method, "profile.list") or std.mem.eql(u8, method, "profiles.list")) {
         const found = try profiles.discoverAll(allocator, io, environ);
