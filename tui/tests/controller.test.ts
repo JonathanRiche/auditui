@@ -164,6 +164,8 @@ test("emits only canonical protocol parameters for media actions", async () => {
       if (method === "library.list") return { items: [] };
       if (method === "downloads.list") return { items: [] };
       if (method === "player.status") return { paused: true };
+      if (method === "player.command" && params.command === "play")
+        return { itemId: "1", title: "Dune", durationSeconds: 100, positionSeconds: 0 };
       return {};
     },
   } as EngineClient;
@@ -226,7 +228,8 @@ test("emits only canonical protocol parameters for media actions", async () => {
     state: "queued",
   });
   controller.handleKey(key("return"));
-  controller.handleKey(key("return"));
+  await Bun.sleep(0);
+  expect(state.screen).toBe("now-playing");
   controller.handleKey(key("h"));
   controller.handleKey(key("]"));
   controller.handleKey(key("."));
@@ -615,7 +618,7 @@ test("command palette and product actions emit canonical wishlist, retry, and pl
   const playerCalls = calls
     .filter((call) => call.method === "player.command")
     .map((call) => call.params);
-  expect(playerCalls).toContainEqual({ command: "bookmark-add", label: "Bookmark at 42s" });
+  expect(playerCalls).toContainEqual({ command: "bookmark-add", label: "Bookmark at 0:42" });
   expect(playerCalls).toContainEqual({ command: "set-volume", value: 100 });
   expect(playerCalls).toContainEqual({ command: "set-sleep-timer", value: 900 });
   expect(playerCalls).toContainEqual({ command: "bookmark-delete", bookmarkId: 7 });
@@ -808,4 +811,65 @@ test("unplayable messages explain the provider-specific reason", () => {
   expect(
     unplayableMessage({ title: "Pup Pack: Skye", provider: "yoto", downloadable: false }),
   ).toContain("did not provide playable audio");
+});
+
+test("playing a title from detail lands on Now Playing and re-activating opens the player", async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const client = {
+    async request(method: string, params: Record<string, unknown> = {}) {
+      calls.push({ method, params });
+      if (method === "profile.list") return { items: [{ name: "test", securePermissions: true }] };
+      if (method === "player.command" || method === "player.status")
+        return { itemId: "B012345678", title: "Dune", durationSeconds: 100, positionSeconds: 0 };
+      return { items: [], jobs: [] };
+    },
+  } as EngineClient;
+  const emitter = new EventEmitter();
+  const supervisor = {
+    on: emitter.on.bind(emitter),
+    start: () => emitter.emit("ready", client),
+    stop: async () => {},
+  } as unknown as EngineSupervisor;
+  let state = initialState();
+  const controller = new AppController(
+    {
+      getState: () => state,
+      dispatch: (action) => {
+        state = reducer(state, action);
+      },
+      quit() {},
+    },
+    supervisor,
+  );
+  controller.start();
+  await Bun.sleep(0);
+  state = reducer(state, {
+    type: "library.loaded",
+    items: [
+      {
+        id: "B012345678",
+        asin: "B012345678",
+        title: "Dune",
+        authors: [],
+        narrators: [],
+        durationSeconds: 100,
+        positionSeconds: 0,
+        downloaded: true,
+        localPath: "/tmp/dune.m4b",
+      },
+    ],
+  });
+  state = { ...state, player: { ...state.player, itemId: null, durationSeconds: 0 } };
+  state = reducer(state, { type: "navigate", screen: "detail" });
+  controller.handleKey(key("return"));
+  await Bun.sleep(0);
+  const plays = () => calls.filter((call) => call.method === "player.command");
+  expect(plays()).toHaveLength(1);
+  expect(state.screen).toBe("now-playing");
+
+  state = reducer(state, { type: "navigate", screen: "detail" });
+  controller.handleKey(key("return"));
+  await Bun.sleep(0);
+  expect(plays()).toHaveLength(1);
+  expect(state.screen).toBe("now-playing");
 });

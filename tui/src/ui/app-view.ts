@@ -134,6 +134,11 @@ export class AppView {
   // Live lines of the now-playing screen, updated in place every tick so the
   // controls keep their hover state and never miss a click mid-rebuild.
   private nowPlayingProgress: TextRenderable | null = null;
+  private nowPlayingBarStart = 0;
+  private nowPlayingBarWidth = 0;
+  private detailProgress: TextRenderable | null = null;
+  private detailProgressTime: TextRenderable | null = null;
+  private detailProgressLabel: TextRenderable | null = null;
   private nowPlayingSettings: TextRenderable | null = null;
   private dockBarStart = 0;
   private dockBarWidth = 0;
@@ -344,6 +349,8 @@ export class AppView {
       this.scheduleSelectionScroll(state);
     } else if (state.screen === "now-playing") {
       this.updateNowPlayingLive(state);
+    } else if (state.screen === "detail") {
+      this.updateDetailLive(state);
     }
     this.ctx.requestRender();
   }
@@ -377,7 +384,12 @@ export class AppView {
           : null;
       return null;
     })();
-    if (!target) return;
+    if (!target) {
+      // Detail (and empty lists) always start at the top; otherwise the grid's
+      // scroll offset carries over and hides the title on short terminals.
+      if (state.screen === "detail") this.body.scrollTop = 0;
+      return;
+    }
     // The retained tree needs one layout pass before child coordinates are
     // valid. Scrolling synchronously here used stale y=0 values.
     this.pendingSelectionScroll = setTimeout(() => {
@@ -405,7 +417,7 @@ export class AppView {
         ? t`${bold(fg(palette.accent)(label))}`
         : t`${fg(palette.muted)(label)}`;
     const compact = state.width < 104;
-    this.navBrand.width = compact ? 5 : 11;
+    this.navBrand.width = compact ? 7 : 11;
     this.navBrand.content = t`${bold(fg(palette.foreground)(compact ? "AUDIT" : "AUDITUI"))}`;
     this.navLibrary.width = compact ? 6 : 12;
     this.navWishlist.width = compact ? 6 : 12;
@@ -413,14 +425,17 @@ export class AppView {
     this.navNowPlaying.width = compact ? 7 : 15;
     this.navSettings.width = compact ? 6 : 11;
     this.navSearch.width = compact ? 4 : 12;
-    this.engineStatus.width = compact ? 3 : 18;
+    this.engineStatus.width = compact ? 2 : 18;
     this.navLibrary.content = tab("library", compact ? "Lib" : "Library");
     this.navWishlist.content = tab("wishlist", compact ? "Wish" : "Wishlist");
     this.navDownloads.content = tab("downloads", compact ? "DL" : "Downloads");
     this.navNowPlaying.content = tab("now-playing", compact ? "Play" : "Now playing");
     this.navSettings.content = tab("settings", compact ? "Set" : "Settings");
     this.navSearch.content = t`${fg(palette.subtle)(compact ? "/" : "/ Search")}`;
-    this.engineStatus.content = statusCopy(state.engineStatus === "online", state.engineStatus);
+    this.engineStatus.content = statusCopy(
+      state.engineStatus === "online",
+      compact ? "" : state.engineStatus,
+    );
   }
 
   private renderCommandPalette(state: AppState): void {
@@ -608,9 +623,12 @@ export class AppView {
   }
 
   private isOverDockBar(x: number): boolean {
-    if (this.playerDuration <= 0 || this.dockBarWidth <= 1) return false;
-    const start = this.dockProgress.screenX + this.dockBarStart;
-    return x >= start && x < start + this.dockBarWidth;
+    return this.isOverBar(x, this.timelineGeometry());
+  }
+
+  private isOverBar(x: number, geometry: { start: number; width: number }): boolean {
+    if (this.playerDuration <= 0 || geometry.width <= 1) return false;
+    return x >= geometry.start && x < geometry.start + geometry.width;
   }
 
   private wheelSeek(event: {
@@ -653,15 +671,23 @@ export class AppView {
     force: boolean,
     event: { button: number; preventDefault(): void; stopPropagation(): void },
   ): void {
-    if (event.button !== 0 || this.playerDuration <= 0 || this.dockBarWidth <= 1) return;
+    this.seekAt(x, this.timelineGeometry(), force, event);
+  }
+
+  private seekAt(
+    x: number,
+    geometry: { start: number; width: number },
+    force: boolean,
+    event: { button: number; preventDefault(): void; stopPropagation(): void },
+  ): void {
+    if (event.button !== 0 || this.playerDuration <= 0 || geometry.width <= 1) return;
     // Presses on the time labels or speed readout are not seeks; landing on
     // "1:07:15" used to jump straight to the end of the book.
-    if (force && !this.isOverDockBar(x)) return;
+    if (force && !this.isOverBar(x, geometry)) return;
     const now = Date.now();
     if (!force && now - this.lastDragSeekAt < 80) return;
     this.lastDragSeekAt = now;
-    const start = this.dockProgress.screenX + this.dockBarStart;
-    const ratio = Math.max(0, Math.min(1, (x - start) / (this.dockBarWidth - 1)));
+    const ratio = Math.max(0, Math.min(1, (x - geometry.start) / (geometry.width - 1)));
     event.preventDefault();
     event.stopPropagation();
     // Never seek into the final seconds: that ends playback instead of
@@ -684,7 +710,7 @@ export class AppView {
 ${bold(fg(palette.foreground)("LIBRARY GRID"))}
 ${bold("h / ←")}      Move left             ${bold("l / →")}      Move right
 ${bold("k / ↑")}      Move up               ${bold("j / ↓")}      Move down
-${bold("Enter")}      Open selected title   ${bold("d")}          Download title
+${bold("Enter")}      Play selected title   ${bold("i / d")}      Details / download
 
 ${bold(fg(palette.foreground)("SCREENS & SEARCH"))}
 ${bold("Ctrl+p")}     Command palette        ${bold("1–5")}        Jump between screens
@@ -725,7 +751,16 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
                   { ...state.player, positionSeconds: 0, sleepTimerSeconds: null },
                   state.library.find((item) => item.id === state.player.itemId)?.coverUrl,
                 ]
-              : [state.visibleItems, state.downloads];
+              : state.screen === "detail"
+                ? [
+                    state.visibleItems,
+                    state.downloads,
+                    state.player.itemId,
+                    state.player.paused,
+                    state.player.ended,
+                    state.player.durationSeconds > 0,
+                  ]
+                : [state.visibleItems, state.downloads];
     return JSON.stringify([
       state.screen,
       state.selectedIndex,
@@ -748,6 +783,9 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
   private clearBody(): void {
     this.nowPlayingProgress = null;
     this.nowPlayingSettings = null;
+    this.detailProgress = null;
+    this.detailProgressTime = null;
+    this.detailProgressLabel = null;
     for (const child of [...this.body.getChildren()]) {
       this.body.remove(child);
       child.destroyRecursively();
@@ -828,6 +866,14 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       return;
     }
     if (state.query) {
+      this.body.add(
+        text(
+          this.ctx,
+          "search-hint",
+          t`${fg(palette.subtle)("/ edit search  ·  Esc or q clears results")}`,
+          { width: "100%" },
+        ),
+      );
       this.addSection(`Search results for “${state.query}”`, state.visibleItems, state);
       return;
     }
@@ -1055,8 +1101,8 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
     if (!item)
       return this.addEmpty("No book selected", "Return to the library and choose a title.");
     const wide = state.width >= 82;
-    const coverHeight = Math.max(10, Math.min(18, state.height - 14));
-    const coverWidth = coverHeight * 2;
+    const coverWidth = detailCoverWidth(state);
+    const coverHeight = coverWidth / 2;
     const row = new BoxRenderable(this.ctx, {
       id: "detail-layout",
       width: "100%",
@@ -1112,13 +1158,14 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       backgroundColor: palette.background,
       shouldFill: true,
     });
-    const percentage = listeningPercent(item);
     const transfer = itemDownload(state, item);
+    const live = detailIsLive(state, item);
+    const percentage = live ? livePercent(state.player) : listeningPercent(item);
     metadata.add(
       text(
         this.ctx,
         "detail-kicker",
-        t`${fg(palette.accent)(`${providerLabel(item.provider)}  ·  ${item.downloaded ? "AVAILABLE OFFLINE" : item.streamable ? "READY TO STREAM" : "IN YOUR LIBRARY"}`)}`,
+        t`${fg(palette.accent)(`${providerLabel(item.provider)}  ·  ${live ? (state.player.paused ? "PAUSED" : "NOW PLAYING") : item.downloaded ? "AVAILABLE OFFLINE" : item.streamable ? "READY TO STREAM" : "IN YOUR LIBRARY"}`)}`,
         { width: "100%" },
       ),
     );
@@ -1149,38 +1196,35 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
       text(
         this.ctx,
         "detail-time",
-        t`${fg(palette.subtle)(`${formatTime(item.durationSeconds)}  ·  ${item.releaseDate ?? "Release date unavailable"}`)}`,
+        t`${fg(palette.subtle)(`${formatTime(item.durationSeconds)}  ·  ${formatReleaseDate(item.releaseDate)}`)}`,
         { width: "100%" },
       ),
     );
-    metadata.add(
-      text(
-        this.ctx,
-        "detail-progress-label",
-        t`${fg(palette.muted)("Listening progress")}  ${bold(fg(palette.accent)(`${percentage}% listened`))}`,
-        { width: "100%" },
-      ),
+    this.detailProgressLabel = text(
+      this.ctx,
+      "detail-progress-label",
+      t`${fg(palette.muted)("Listening progress")}  ${bold(fg(palette.accent)(`${percentage}% listened`))}`,
+      { width: "100%" },
     );
-    metadata.add(
-      text(
-        this.ctx,
-        "detail-progress",
-        progress(
-          item.positionSeconds,
-          item.durationSeconds,
-          Math.max(12, Math.min(32, state.width - coverWidth - 18)),
-        ),
-        { width: "100%" },
+    metadata.add(this.detailProgressLabel);
+    this.detailProgress = text(
+      this.ctx,
+      "detail-progress",
+      progress(
+        live ? state.player.positionSeconds : item.positionSeconds,
+        live ? state.player.durationSeconds : item.durationSeconds,
+        Math.max(12, Math.min(32, state.width - coverWidth - 18)),
       ),
+      { width: "100%" },
     );
-    metadata.add(
-      text(
-        this.ctx,
-        "detail-progress-time",
-        t`${fg(palette.subtle)(`${formatTime(item.positionSeconds)} of ${formatTime(item.durationSeconds)}`)}`,
-        { width: "100%" },
-      ),
+    metadata.add(this.detailProgress);
+    this.detailProgressTime = text(
+      this.ctx,
+      "detail-progress-time",
+      this.detailProgressTimeContent(state, item),
+      { width: "100%" },
     );
+    metadata.add(this.detailProgressTime);
     if (transfer?.state === "queued" || transfer?.state === "active") {
       const percentage = downloadPercent(transfer);
       metadata.add(
@@ -1202,24 +1246,27 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
     const detailAction = text(
       this.ctx,
       "detail-action",
-      transfer?.state === "queued" || transfer?.state === "active"
-        ? t`${bold(fg(palette.accent)(transfer.state === "queued" ? "Queued for download" : `Downloading ${downloadPercent(transfer)}%`))}    ${fg(palette.muted)("3 / click  Monitor or cancel")}`
-        : transfer?.state === "failed"
-          ? t`${bold(fg(palette.danger)("Download failed"))}    ${fg(palette.muted)("Open Downloads to retry")}`
-          : item.downloaded || transfer?.state === "completed"
-            ? t`${fg(palette.success)("✓ Available offline")}    ${bold(fg(palette.accent)("Enter  Resume / play"))}`
-            : item.streamable
-              ? t`${bold(fg(palette.accent)("Enter  Stream / play"))}    ${fg(palette.muted)(`${providerLabel(item.provider)} streaming`)}`
-              : item.downloadable !== false
-                ? t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`
-                : t`${fg(palette.muted)("Unavailable for playback on this account")}`,
+      live
+        ? t`${bold(fg(palette.accent)(state.player.paused ? "Space / click  Resume" : "Space / click  Pause"))}    ${fg(palette.muted)("4  Open player")}`
+        : transfer?.state === "queued" || transfer?.state === "active"
+          ? t`${bold(fg(palette.accent)(transfer.state === "queued" ? "Queued for download" : `Downloading ${downloadPercent(transfer)}%`))}    ${fg(palette.muted)("3 / click  Monitor or cancel")}`
+          : transfer?.state === "failed"
+            ? t`${bold(fg(palette.danger)("Download failed"))}    ${fg(palette.muted)("Open Downloads to retry")}`
+            : item.downloaded || transfer?.state === "completed"
+              ? t`${fg(palette.success)("✓ Available offline")}    ${bold(fg(palette.accent)("Enter  Resume / play"))}`
+              : item.streamable
+                ? t`${bold(fg(palette.accent)("Enter  Stream / play"))}    ${fg(palette.muted)(`${providerLabel(item.provider)} streaming`)}`
+                : item.downloadable !== false
+                  ? t`${bold(fg(palette.accent)("d  Download"))}    ${fg(palette.muted)("Playback available after download")}`
+                  : t`${fg(palette.muted)("Unavailable for playback on this account")}`,
       {
         width: "100%",
         onMouseDown: (event) => {
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
-          if (
+          if (live) this.options.onTogglePlayback();
+          else if (
             transfer?.state === "queued" ||
             transfer?.state === "active" ||
             transfer?.state === "failed"
@@ -1251,7 +1298,7 @@ ${dim(fg(palette.muted)("Press ? or click to close"))}`;
 ${fg(palette.muted)(plainDescription(item.description))}`,
         {
           width: "100%",
-          height: Math.max(3, Math.min(8, state.height - coverHeight - 10)),
+          height: Math.max(3, Math.min(8, state.height - coverHeight - 12)),
           bg: palette.surface,
           wrapMode: "word",
         },
@@ -1288,16 +1335,22 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
         width: "100%",
       }),
     );
+    const audibleOnly = isYotoProfile(state.profileName);
     this.body.add(
       text(
         this.ctx,
         "wishlist-help",
-        t`${fg(palette.subtle)("a add by ASIN  ·  x remove selected  ·  changes always ask for confirmation")}`,
+        t`${fg(palette.subtle)(audibleOnly ? "Wishlist is an Audible feature  ·  5 Settings switches profiles" : "a add by ASIN  ·  x remove selected  ·  changes always ask for confirmation")}`,
         { width: "100%" },
       ),
     );
     if (!state.wishlist.length)
-      return this.addEmpty("Your wishlist is empty", "Press a to add an Audible title by ASIN.");
+      return audibleOnly
+        ? this.addEmpty(
+            "Wishlist is Audible-only",
+            "Switch to an Audible profile in Settings (5) to add titles by ASIN.",
+          )
+        : this.addEmpty("Your wishlist is empty", "Press a to add an Audible title by ASIN.");
     state.wishlist.forEach((item, index) => {
       const selected = index === state.selectedIndex;
       const card = panel(this.ctx, `wishlist-${item.id}`, selected);
@@ -1441,7 +1494,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
         text(
           this.ctx,
           `profile-${profile.name}-copy`,
-          t`${selected ? fg(palette.accent)("▶ ") : "  "}${bold(profile.account ?? profile.name)}  ${fg(palette.accent)(providerLabel(profile.provider))}  ${fg(profile.secure ? palette.success : palette.danger)(profile.secure ? "secure" : "unsafe permissions")}`,
+          t`${selected ? fg(palette.accent)("▶ ") : "  "}${bold(profile.account ?? profile.name)}  ${fg(palette.accent)(providerLabel(profile.provider))}  ${fg(profile.secure ? palette.success : palette.danger)(profile.secure ? "secure" : "unsafe permissions")}${isActiveProfile(state.profileName, profile) ? fg(palette.success)("  ● active") : ""}`,
           { width: "100%", bg: selected ? palette.surfaceRaised : palette.surface },
         ),
       );
@@ -1501,7 +1554,7 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
       : 0;
     const transferState =
       job.state === "completed"
-        ? "Downloaded 100%"
+        ? "Downloaded 100%  ·  Enter open"
         : job.state === "active"
           ? `Downloading ${percentage}%  ·  c cancel`
           : job.state === "queued"
@@ -1678,7 +1731,18 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
       this.ctx,
       "now-playing-progress",
       this.nowPlayingProgressContent(state),
-      { width: "100%", bg: palette.surface },
+      {
+        width: "100%",
+        bg: palette.surface,
+        onMouseDown: (event) => this.seekAt(event.x, this.nowPlayingGeometry(), true, event),
+        onMouseDrag: (event) => this.seekAt(event.x, this.nowPlayingGeometry(), false, event),
+        onMouseScroll: (event) => this.wheelSeek(event),
+        onMouseMove: (event) =>
+          this.ctx.setMousePointer(
+            this.isOverBar(event.x, this.nowPlayingGeometry()) ? "crosshair" : "default",
+          ),
+        onMouseOut: () => this.ctx.setMousePointer("default"),
+      },
     );
     details.add(this.nowPlayingProgress);
     const controls = new BoxRenderable(this.ctx, {
@@ -1812,13 +1876,14 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
 
   private nowPlayingProgressContent(state: AppState) {
     const player = state.player;
+    const elapsed = formatTime(player.positionSeconds);
+    // Card padding/border (6) + cover (28) + gap (2) + two time labels (18).
+    const barWidth = Math.max(12, state.width - 54);
+    this.nowPlayingBarStart = elapsed.length + 2;
+    this.nowPlayingBarWidth = barWidth;
     return concat(
-      t`${fg(palette.muted)(formatTime(player.positionSeconds))}  `,
-      progress(
-        player.positionSeconds,
-        player.durationSeconds,
-        Math.max(12, Math.min(48, state.width - 30)),
-      ),
+      t`${fg(palette.muted)(elapsed)}  `,
+      progress(player.positionSeconds, player.durationSeconds, barWidth),
       t`  ${fg(palette.muted)(formatTime(player.durationSeconds))}`,
     );
   }
@@ -1832,6 +1897,36 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
           ? formatTime(player.sleepTimerSeconds)
           : (player.sleepTimer ?? "off");
     return t`${fg(palette.subtle)(`Speed ${player.speed.toFixed(2)}×   Volume ${player.volume}% (+/−)   Sleep ${sleep} (s)`)} `;
+  }
+
+  /** Screen geometry of the Now Playing timeline bar (for tests and hit-testing). */
+  nowPlayingGeometry(): { start: number; width: number } {
+    return {
+      start: (this.nowPlayingProgress?.x ?? 0) + this.nowPlayingBarStart,
+      width: this.nowPlayingBarWidth,
+    };
+  }
+
+  private detailProgressTimeContent(state: AppState, item: LibraryItem) {
+    const live = detailIsLive(state, item);
+    const position = live ? state.player.positionSeconds : item.positionSeconds;
+    const duration = live ? state.player.durationSeconds : item.durationSeconds;
+    return t`${fg(palette.subtle)(`${formatTime(position)} of ${formatTime(duration)}`)}`;
+  }
+
+  private updateDetailLive(state: AppState): void {
+    const item = state.visibleItems[state.selectedIndex];
+    if (!item || !detailIsLive(state, item)) return;
+    if (this.detailProgressTime)
+      this.detailProgressTime.content = this.detailProgressTimeContent(state, item);
+    if (this.detailProgress)
+      this.detailProgress.content = progress(
+        state.player.positionSeconds,
+        state.player.durationSeconds,
+        Math.max(12, Math.min(32, state.width - detailCoverWidth(state) - 18)),
+      );
+    if (this.detailProgressLabel)
+      this.detailProgressLabel.content = t`${fg(palette.muted)("Listening progress")}  ${bold(fg(palette.accent)(`${livePercent(state.player)}% listened`))}`;
   }
 
   private updateNowPlayingLive(state: AppState): void {
@@ -1905,4 +2000,50 @@ ${fg(palette.muted)(plainDescription(item.description))}`,
     );
     this.body.add(card);
   }
+}
+
+function isYotoProfile(profileName: string | null | undefined): boolean {
+  return profileName?.startsWith("yoto:") ?? false;
+}
+
+function isActiveProfile(
+  profileName: string | null | undefined,
+  profile: { name: string; provider?: string },
+): boolean {
+  return profileName === `${profile.provider}:${profile.name}` || profileName === profile.name;
+}
+
+function detailIsLive(state: AppState, item: LibraryItem): boolean {
+  return (
+    state.player.itemId !== null &&
+    (state.player.itemId === item.id || state.player.itemId === item.asin) &&
+    state.player.durationSeconds > 0 &&
+    !state.player.ended
+  );
+}
+
+function livePercent(player: AppState["player"]): number {
+  if (player.durationSeconds <= 0) return 0;
+  return Math.max(
+    0,
+    Math.min(100, Math.round((player.positionSeconds / player.durationSeconds) * 100)),
+  );
+}
+
+/** Cover columns on the detail screen; keeps title + About visible on 30-row terminals. */
+function detailCoverWidth(state: AppState): number {
+  return Math.max(8, Math.min(18, state.height - 18)) * 2;
+}
+
+/** "2025-11-10T12:11:14.358Z" → "Nov 10, 2025"; unparseable values pass through. */
+export function formatReleaseDate(value: string | null | undefined): string {
+  if (!value) return "Release date unavailable";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }

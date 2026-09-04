@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createMockMouse, createTestRenderer, MouseButtons } from "@opentui/core/testing";
 import { initialState, reducer } from "../src/app/state";
-import { AppView, nextSpeedPreset } from "../src/ui/app-view";
+import { AppView, formatReleaseDate, nextSpeedPreset } from "../src/ui/app-view";
 
 const renderers: Array<{ destroy(): void }> = [];
 afterEach(() => {
@@ -728,5 +728,136 @@ describe("speed presets", () => {
     expect(nextSpeedPreset(1, true)).toBe(0.75);
     expect(nextSpeedPreset(0.75, true)).toBe(2.5);
     expect(nextSpeedPreset(1.45, true)).toBe(1.25);
+  });
+});
+
+describe("usability pass", () => {
+  test("formats release dates for humans and passes odd values through", () => {
+    expect(formatReleaseDate("2025-11-10T12:11:14.358Z")).toBe("Nov 10, 2025");
+    expect(formatReleaseDate("2024-02-29")).toBe("Feb 29, 2024");
+    expect(formatReleaseDate("unknown")).toBe("unknown");
+    expect(formatReleaseDate(null)).toBe("Release date unavailable");
+  });
+
+  test("now playing timeline seeks on click and detail shows live playback state", async () => {
+    const setup = await createTestRenderer({ width: 120, height: 40 });
+    const seeks: number[] = [];
+    let toggles = 0;
+    const view = new AppView(setup.renderer, {
+      imageProtocol: "blocks",
+      onResize() {},
+      onSeek(position) {
+        seeks.push(position);
+      },
+      onTogglePlayback() {
+        toggles += 1;
+      },
+      onNavigate() {},
+      onOpenSearch() {},
+    });
+    setup.renderer.root.add(view.root);
+    let state = initialState(120, 40);
+    state = reducer(state, {
+      type: "library.loaded",
+      items: [
+        {
+          id: "dune",
+          asin: "dune",
+          title: "Dune",
+          authors: ["Frank Herbert"],
+          narrators: [],
+          durationSeconds: 100,
+          positionSeconds: 0,
+          downloaded: true,
+          streamable: false,
+          provider: "audible",
+          releaseDate: "2025-11-10T12:11:14.358Z",
+        },
+      ],
+    });
+    state = {
+      ...state,
+      screen: "now-playing",
+      player: {
+        ...state.player,
+        itemId: "dune",
+        title: "Dune",
+        durationSeconds: 100,
+        positionSeconds: 10,
+        paused: false,
+        ended: false,
+      },
+    };
+    view.render(state);
+    await setup.renderOnce();
+    const bar = view.root.findDescendantById("now-playing-progress")!;
+    const geometry = view.nowPlayingGeometry();
+    expect(geometry.width).toBe(120 - 54);
+    const mouse = createMockMouse(setup.renderer);
+    await mouse.click(
+      geometry.start + Math.round((geometry.width - 1) / 2),
+      bar.screenY,
+      MouseButtons.LEFT,
+    );
+    expect(seeks.at(-1)).toBeGreaterThan(45);
+    expect(seeks.at(-1)).toBeLessThan(55);
+    // Clicking the elapsed-time label is not a seek.
+    const count = seeks.length;
+    await mouse.click(bar.screenX, bar.screenY, MouseButtons.LEFT);
+    expect(seeks.length).toBe(count);
+
+    // Detail for the playing title reflects the player, and its action toggles.
+    state = { ...state, screen: "detail" };
+    view.render(state);
+    await setup.renderOnce();
+    let frame = setup.captureCharFrame();
+    expect(frame).toContain("NOW PLAYING");
+    expect(frame).toContain("Nov 10, 2025");
+    expect(frame).toContain("0:10 of 1:40");
+    const action = view.root.findDescendantById("detail-action")!;
+    await mouse.click(action.screenX + 2, action.screenY, MouseButtons.LEFT);
+    expect(toggles).toBe(1);
+    // Position updates patch in place without rebuilding the screen.
+    state = { ...state, player: { ...state.player, positionSeconds: 30 } };
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("0:30 of 1:40");
+    state = { ...state, player: { ...state.player, paused: true } };
+    view.render(state);
+    await setup.renderOnce();
+    frame = setup.captureCharFrame();
+    expect(frame).toContain("PAUSED");
+    expect(frame).toContain("Resume");
+  });
+
+  test("explains that wishlist is Audible-only on Yoto and marks the active profile", async () => {
+    const setup = await createTestRenderer({ width: 120, height: 30 });
+    const view = new AppView(setup.renderer, {
+      imageProtocol: "blocks",
+      onResize() {},
+      onSeek() {},
+      onTogglePlayback() {},
+      onNavigate() {},
+      onOpenSearch() {},
+    });
+    setup.renderer.root.add(view.root);
+    let state = initialState(120, 30);
+    state = { ...state, screen: "wishlist", profileName: "yoto:default" };
+    view.render(state);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Wishlist is Audible-only");
+    state = reducer(state, {
+      type: "profiles.loaded",
+      profiles: [
+        { name: "Jonathan-zig", provider: "audible", secure: true },
+        { name: "default", provider: "yoto", secure: true },
+      ],
+    });
+    state = { ...state, screen: "settings" };
+    view.render(state);
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("● active");
+    expect(frame.indexOf("● active")).toBeGreaterThan(frame.indexOf("Jonathan-zig"));
   });
 });

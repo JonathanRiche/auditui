@@ -189,6 +189,7 @@ export function reducer(state: AppState, action: Action): AppState {
           state.screen === "detail" || action.screen === "detail" ? state.selectedIndex : 0,
         helpVisible: false,
         commandPaletteVisible: false,
+        message: null,
       };
     case "move": {
       const count =

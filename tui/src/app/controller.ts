@@ -10,6 +10,7 @@ import {
 import { RpcRequestError } from "../engine/protocol";
 import type { AppState, DownloadJob, LibraryItem, PlayerState, Screen } from "./types";
 import { libraryColumnCount } from "./state";
+import { formatTime } from "../screens/layout";
 import { commandEntries, type CommandId } from "./commands";
 
 /** Why a library item cannot be played right now, phrased for its provider. */
@@ -146,7 +147,19 @@ export class AppController {
     if (screen === "wishlist") void this.loadWishlist();
   }
 
+  /** Click/Enter on a library card: start listening and land on the player
+   * (chapters, timeline). Titles that cannot play yet open their details. */
   openItem(itemId: string): void {
+    const state = this.host.getState();
+    const index = state.visibleItems.findIndex((item) => item.id === itemId);
+    if (index < 0) return;
+    this.host.dispatch({ type: "move", amount: index - state.selectedIndex });
+    const item = state.visibleItems[index]!;
+    if (item.localPath || item.streamable) void this.playItem(item);
+    else this.host.dispatch({ type: "navigate", screen: "detail" });
+  }
+
+  showItemDetails(itemId: string): void {
     const state = this.host.getState();
     const index = state.visibleItems.findIndex((item) => item.id === itemId);
     if (index < 0) return;
@@ -359,12 +372,16 @@ export class AppController {
     }
     const name = key.name;
     if (name === "escape") {
-      if (state.screen === "detail")
+      if (state.screen === "library" && state.query)
+        this.host.dispatch({ type: "search.change", query: "" });
+      else if (state.screen === "detail")
         this.host.dispatch({ type: "navigate", screen: state.previousScreen });
       else if (state.screen !== "library")
         this.host.dispatch({ type: "navigate", screen: "library" });
     } else if (name === "q") {
-      if (state.screen === "detail")
+      if (state.screen === "library" && state.query)
+        this.host.dispatch({ type: "search.change", query: "" });
+      else if (state.screen === "detail")
         this.host.dispatch({ type: "navigate", screen: state.previousScreen });
       else void this.host.quit();
     } else if (name === "/" || key.sequence === "/") {
@@ -405,11 +422,13 @@ export class AppController {
       this.requestWishlistRemoval();
     else if ((name === "x" || name === "delete") && state.screen === "settings")
       this.requestProfileRemoval();
+    else if (name === "i" && state.screen === "library")
+      this.host.dispatch({ type: "navigate", screen: "detail" });
     else if (name === "a" && state.screen === "library") void this.startOnboarding("audible");
     else if (name === "y" && state.screen === "library") void this.startOnboarding("yoto");
     else if (name === "b" && state.screen === "now-playing")
       void this.playerCommand("bookmark-add", {
-        label: `Bookmark at ${Math.floor(state.player.positionSeconds)}s`,
+        label: bookmarkLabel(state.player),
       });
     else if ((name === "x" || name === "delete") && state.screen === "now-playing")
       void this.deleteSelectedBookmark();
@@ -493,8 +512,10 @@ export class AppController {
 
   private activate(): void {
     const state = this.host.getState();
-    if (state.screen === "library") this.host.dispatch({ type: "navigate", screen: "detail" });
-    else if (state.screen === "detail") {
+    if (state.screen === "library") {
+      const item = state.visibleItems[state.selectedIndex];
+      if (item) this.openItem(item.id);
+    } else if (state.screen === "detail") {
       const item = state.visibleItems[state.selectedIndex];
       if (!item) return;
       if (!item.localPath && !item.streamable) {
@@ -506,6 +527,9 @@ export class AppController {
       const profile = state.profiles[state.selectedIndex];
       if (!profile) return;
       void this.applyProfile(profile);
+    } else if (state.screen === "downloads") {
+      const job = state.downloads[state.selectedIndex];
+      if (job) this.openItem(job.itemId);
     } else if (state.screen === "now-playing") {
       const bookmark = state.player.bookmarks[state.selectedIndex];
       if (bookmark) void this.playerCommand("seek-absolute", { value: bookmark.positionSeconds });
@@ -727,6 +751,12 @@ export class AppController {
 
   private async loadWishlist(): Promise<void> {
     if (!this.client) return;
+    // Wishlists are an Audible feature; asking the engine with a Yoto profile
+    // only produces a confusing "profile was not found" error.
+    if (this.host.getState().profileName?.startsWith("yoto:")) {
+      this.host.dispatch({ type: "wishlist.loaded", items: [] });
+      return;
+    }
     try {
       const result = await this.client.request<unknown>(
         "wishlist.list",
@@ -827,12 +857,26 @@ export class AppController {
 
   private async playItem(item: LibraryItem): Promise<void> {
     if (!item.localPath && !item.streamable) return;
-    await this.playerCommand("play", {
-      ...(item.localPath ? { path: item.localPath } : {}),
-      itemId: item.id,
-      title: item.title,
-      ...this.accountParams(item),
-    });
+    const isLive = (player: PlayerState) =>
+      player.itemId !== null &&
+      (player.itemId === item.id || player.itemId === item.asin) &&
+      player.durationSeconds > 0 &&
+      !player.ended;
+    // Already playing this title: just open the player (chapters, timeline)
+    // instead of restarting it from the beginning.
+    if (!isLive(this.host.getState().player)) {
+      await this.playerCommand("play", {
+        ...(item.localPath ? { path: item.localPath } : {}),
+        itemId: item.id,
+        title: item.title,
+        ...this.accountParams(item),
+      });
+    }
+    // Land on Now Playing so chapters and the timeline are one click away.
+    // Streams report their duration a moment later, so only the id is checked.
+    const player = this.host.getState().player;
+    if (player.itemId === item.id || (item.asin !== undefined && player.itemId === item.asin))
+      this.navigateTo("now-playing");
   }
 
   private accountParams(item?: LibraryItem): Record<string, unknown> {
@@ -1073,4 +1117,12 @@ export class AppController {
 
 function friendlyError(error: unknown): string {
   return error instanceof Error ? error.message : "The engine could not complete the request";
+}
+
+/** "Chapter title · 1:10" when the chapter is known, else "Bookmark at 1:10". */
+function bookmarkLabel(player: PlayerState): string {
+  const index = Number(player.chapter);
+  const chapter = player.chapters.find((entry) => entry.index === index)?.title;
+  const at = formatTime(player.positionSeconds);
+  return chapter ? `${chapter} · ${at}` : `Bookmark at ${at}`;
 }
