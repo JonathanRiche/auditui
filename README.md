@@ -21,6 +21,11 @@ are never run in CI.
 
 ![Auditui title details with full-resolution cover artwork and persistent player](docs/images/title-detail.png)
 
+### Omarchy integration
+
+The optional [Auditui Now Playing plugin](https://github.com/JonathanRiche/omarchy-auditui)
+adds the current title, chapter, progress, and playback controls to the Omarchy bar.
+
 ## Install
 
 Install the latest Linux x86_64 release directly from GitHub:
